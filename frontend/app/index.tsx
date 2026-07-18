@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { View, StyleSheet, Pressable, Text, ScrollView, Platform } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
+import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { StatusBar } from "expo-status-bar";
 import { COLORS, SPACING, FS } from "../src/lib/theme";
 import { Sidebar } from "../src/components/Sidebar";
@@ -177,7 +178,8 @@ export default function Index() {
   };
 
   return (
-    <SafeAreaView style={styles.root} onTouchStart={resetIdle}>
+    <GestureHandlerRootView style={{ flex: 1 }}>
+      <SafeAreaView style={styles.root} onTouchStart={resetIdle}>
       <StatusBar style="light" />
       <View style={styles.shell}>
         <Sidebar
@@ -205,6 +207,7 @@ export default function Index() {
         </View>
       )}
     </SafeAreaView>
+    </GestureHandlerRootView>
   );
 }
 
