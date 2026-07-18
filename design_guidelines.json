@@ -1,0 +1,152 @@
+{
+  "app_name": "PoolKiosk Dashboard",
+  "personality": "7 Dark-First Utility DARK (Modified for specific metric accents)",
+  "personality_one_liner": "A sharp, highly legible, command-center dashboard optimized for a 7-inch landscape kiosk, using tactical metric accents to provide immediate pool status at a glance.",
+  "color": {
+    "surface": "#0A0E1A",
+    "onSurface": "#FFFFFF",
+    "surfaceSecondary": "#151B2B",
+    "onSurfaceSecondary": "#E2E8F0",
+    "surfaceTertiary": "#1E2638",
+    "onSurfaceTertiary": "#94A3B8",
+    "surfaceInverse": "#FFFFFF",
+    "onSurfaceInverse": "#0A0E1A",
+    "brand": "#00A3FF",
+    "brandPrimary": "#00A3FF",
+    "onBrandPrimary": "#FFFFFF",
+    "brandSecondary": "#10B981",
+    "onBrandSecondary": "#FFFFFF",
+    "brandTertiary": "#1E2638",
+    "onBrandTertiary": "#E2E8F0",
+    "success": "#10B981",
+    "onSuccess": "#FFFFFF",
+    "warning": "#F59E0B",
+    "onWarning": "#FFFFFF",
+    "error": "#EF4444",
+    "onError": "#FFFFFF",
+    "info": "#3B82F6",
+    "onInfo": "#FFFFFF",
+    "border": "#1E2638",
+    "borderStrong": "#334155",
+    "divider": "#1E2638",
+    "metricTemp": "#00A3FF",
+    "metricPh": "#10B981",
+    "metricOrp": "#F59E0B",
+    "metricSalinity": "#8B5CF6"
+  },
+  "typography": {
+    "displayFontFamily": "Rajdhani",
+    "textFontFamily": "Satoshi",
+    "scale": {
+      "sm": 12,
+      "base": 14,
+      "lg": 16,
+      "xl": 20,
+      "2xl": 24,
+      "3xl": 48
+    }
+  },
+  "spacing": {
+    "rule": "Maintain tight, rigid widget spacing (md:12px gap) to maximize the 600px height. Use exact padding inside widgets.",
+    "xs": 4,
+    "sm": 8,
+    "md": 12,
+    "lg": 16,
+    "xl": 24,
+    "2xl": 32,
+    "3xl": 48
+  },
+  "radius_tokens": {
+    "sm": 6,
+    "md": 12,
+    "lg": 16,
+    "pill": 999
+  },
+  "shadow_tier": "0",
+  "navigation": "custom_fixed_sidebar",
+  "icon_set": "Lucide",
+  "glassmorphism": {
+    "enabled": "false",
+    "do's": ["Use flat solid cards for maximum readability in utility environments."],
+    "dont's": ["No blur on metric cards. Performance and clarity over aesthetic glass."]
+  },
+  "platform_libraries": {
+    "glass": {
+      "ios": "expo-glass-effect",
+      "android": "expo-blur",
+      "low_end_android_fallback": "solid surfaceSecondary"
+    },
+    "image": "expo-image",
+    "blur": "expo-blur",
+    "bottom_sheet": "@gorhom/bottom-sheet",
+    "animation": "react-native-reanimated",
+    "gesture": "react-native-gesture-handler"
+  },
+  "screens": [
+    {
+      "name": "Dashboard (Home)",
+      "purpose": "Provides real-time state of the pool via a customizable, draggable grid of widgets.",
+      "states": {
+        "loading": "Central spinner with 'Connexion MQTT...'",
+        "empty": "No widgets configured. Show 'Ajouter des widgets' button.",
+        "error": "Connection lost. Red error bar at top, 'Hors ligne'."
+      },
+      "layout": "Fixed left sidebar (~220px). Top header (60px) with time, date, weather. Main area is a Masonry or Flex Wrap grid. Row 1: Temp (Blue), pH (Green), ORP (Orange), Sal (Purple) cards. Row 2: Large 24h History Chart spanning 2 columns, Equipment Toggles in the 3rd column. Bottom row: System state & Alerts. Drag & drop enabled via react-native-draggable-grid or similar."
+    },
+    {
+      "name": "Widgets Menu",
+      "purpose": "Allows user to toggle visibility of dashboard widgets.",
+      "states": {
+        "loading": "N/A",
+        "empty": "N/A",
+        "error": "N/A"
+      },
+      "layout": "Can be a modal overlay or a dedicated screen. List of all available widgets with a simple switch component next to each. Uses surfaceTertiary background."
+    },
+    {
+      "name": "Historique",
+      "purpose": "Detailed historical data across all sensors.",
+      "states": {
+        "loading": "Chart skeletons",
+        "empty": "No data for selected period",
+        "error": "Failed to load historical data"
+      },
+      "layout": "Sidebar remains. Large multi-line/area charts. Top filter bar for time periods (24h, 7j, 30j)."
+    },
+    {
+      "name": "Screensaver (Veille)",
+      "purpose": "Displays automatically after 5 minutes of inactivity.",
+      "states": {
+        "loading": "N/A",
+        "empty": "N/A",
+        "error": "N/A"
+      },
+      "layout": "Full screen aesthetic pool image (dark/night) overlay with large clock, current water temp, and a subtle pulsing status dot. Tap anywhere to wake."
+    }
+  ],
+  "images": {
+    "screensaver_background": {
+      "url": "https://images.pexels.com/photos/9754666/pexels-photo-9754666.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940",
+      "alt": "Dark night swimming pool background for screensaver mode"
+    }
+  },
+  "haptics": {
+    "events": {
+      "widget_toggle": "impactLight",
+      "equipment_toggle": "impactMedium",
+      "menu_select": "selection",
+      "alert_trigger": "notificationWarning"
+    }
+  },
+  "instructions_to_main_agent": [
+    "Design specifically for a landscape 1024x600 resolution (Raspberry Pi 7-inch touch display). Use fixed dimensions or percentages suitable for horizontal layouts.",
+    "Implement a permanent Left Sidebar (width ~200px-240px) with the requested links: Accueil, Température, Qualité de l'eau, Équipements, Programmation, Historique, Alertes, Paramètres.",
+    "The Dashboard grid MUST be modular. Create individual widget components: TempWidget, PhWidget, OrpWidget, SalinityWidget, EquipmentWidget, HistoryWidget, SystemStateWidget.",
+    "Follow the specific accent colors required: Blue (#00A3FF) for Temperature, Green (#10B981) for pH, Orange (#F59E0B) for ORP, and Purple (#8B5CF6) for Salinity. Use these colors for the horizontal gauge fill and the metric value text.",
+    "Include a 'Menu Widgets' overlay or screen where users can toggle which widgets are displayed on the main dashboard.",
+    "Implement an automatic Screensaver mode (triggered after 5 minutes idle) using the provided night pool background image, displaying just the time and water temp.",
+    "For the typography, strictly use Rajdhani for metric numbers and headers to give a technical/dashboard vibe, and Satoshi for standard labels/body.",
+    "Ensure equipment controls (Filtration, Electrolyzer, Heat Pump, Lights) use prominent, finger-friendly toggles (min 44x44 tap target).",
+    "Layout hierarchy: Keep top header slim (Time/Date/Weather). Ensure charts are easily readable without excessive scrolling."
+  ]
+}
