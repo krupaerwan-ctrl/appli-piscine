@@ -3,9 +3,9 @@ import { View, Text, StyleSheet } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { COLORS, SPACING, FS } from "../lib/theme";
 
-type Props = { outdoorTemp?: number };
+type Props = { outdoorTemp?: number; title?: string };
 
-export const TopHeader: React.FC<Props> = ({ outdoorTemp = 28 }) => {
+export const TopHeader: React.FC<Props> = ({ outdoorTemp = 28, title = "Tableau de bord" }) => {
   const [now, setNow] = useState(new Date());
   useEffect(() => {
     const t = setInterval(() => setNow(new Date()), 1000);
@@ -15,7 +15,7 @@ export const TopHeader: React.FC<Props> = ({ outdoorTemp = 28 }) => {
   const date = now.toLocaleDateString("fr-FR", { day: "numeric", month: "long", year: "numeric" });
   return (
     <View style={styles.wrap} testID="top-header">
-      <Text style={styles.title}>Tableau de bord</Text>
+      <Text style={styles.title}>{title}</Text>
       <View style={styles.right}>
         <View style={{ alignItems: "flex-end" }}>
           <Text style={styles.time}>{time}</Text>

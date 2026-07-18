@@ -17,6 +17,21 @@ import {
 } from "../src/components/Widgets";
 import { api } from "../src/lib/api";
 
+function headerTitle(key: string): string {
+  switch (key) {
+    case "home": return "Tableau de bord";
+    case "temperature": return "Température";
+    case "water": return "Qualité de l'eau";
+    case "equipment": return "Équipements";
+    case "schedule": return "Programmation";
+    case "history": return "Historique";
+    case "alerts": return "Alertes";
+    case "widgets": return "Widgets";
+    case "settings": return "Paramètres";
+    default: return "Tableau de bord";
+  }
+}
+
 export default function Index() {
   const [active, setActive] = useState("home");
   const [data, setData] = useState<any>(null);
@@ -172,7 +187,7 @@ export default function Index() {
           systemOk={data?.system?.sensors === "OK"}
         />
         <View style={{ flex: 1 }}>
-          <TopHeader outdoorTemp={sensors.outdoor_temp?.value ?? 28} />
+          <TopHeader outdoorTemp={sensors.outdoor_temp?.value ?? 28} title={headerTitle(active)} />
           <View style={{ flex: 1 }}>{renderContent()}</View>
           <View style={styles.footer}>
             <Text style={styles.footerText}>
