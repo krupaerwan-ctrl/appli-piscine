@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from "react";
-import { View, Text, StyleSheet, Pressable, ImageBackground } from "react-native";
+import { View, Text, StyleSheet, Pressable } from "react-native";
+import { LinearGradient } from "expo-linear-gradient";
 import { COLORS, SPACING, FS } from "../lib/theme";
 
 type Props = { waterTemp: number; onWake: () => void };
@@ -14,10 +15,10 @@ export const Screensaver: React.FC<Props> = ({ waterTemp, onWake }) => {
   const date = now.toLocaleDateString("fr-FR", { weekday: "long", day: "numeric", month: "long" });
   return (
     <Pressable onPress={onWake} style={StyleSheet.absoluteFill} testID="screensaver">
-      <ImageBackground
-        source={{ uri: "https://images.pexels.com/photos/9754666/pexels-photo-9754666.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940" }}
+      <LinearGradient
+        colors={["#020617", "#0A1628", "#00253F", "#001428"]}
+        locations={[0, 0.35, 0.7, 1]}
         style={s.bg}
-        imageStyle={{ opacity: 0.55 }}
       >
         <View style={s.overlay}>
           <Text style={s.time}>{time}</Text>
@@ -28,16 +29,16 @@ export const Screensaver: React.FC<Props> = ({ waterTemp, onWake }) => {
           </View>
           <Text style={s.hint}>Toucher l'écran pour réveiller</Text>
         </View>
-      </ImageBackground>
+      </LinearGradient>
     </Pressable>
   );
 };
 
 const s = StyleSheet.create({
-  bg: { flex: 1, backgroundColor: "#000", justifyContent: "center", alignItems: "center" },
+  bg: { flex: 1, justifyContent: "center", alignItems: "center" },
   overlay: {
     flex: 1, justifyContent: "center", alignItems: "center", width: "100%",
-    backgroundColor: "rgba(10,14,26,0.45)", padding: SPACING.xxl,
+    padding: SPACING.xxl,
   },
   time: { color: "#fff", fontSize: 96, fontWeight: "300", letterSpacing: 4 },
   date: { color: COLORS.textSecondary, fontSize: FS.lg, textTransform: "capitalize", marginTop: SPACING.sm },
