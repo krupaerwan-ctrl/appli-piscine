@@ -219,7 +219,7 @@ export const SettingsScreen: React.FC<Props> = ({ settings, onSaved }) => {
         />
       </View>
 
-      {(updateState === "running" || updateLog) && (
+      {(updateState === "running" || !!updateLog) && (
         <View style={[s.card, { marginTop: SPACING.md }]}>
           <View style={s.updateHead}>
             <View

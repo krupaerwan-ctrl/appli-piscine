@@ -27,6 +27,8 @@ ROOT_DIR = Path(__file__).parent
 POOLKIOSK_HOME = Path(os.environ.get("POOLKIOSK_HOME", ROOT_DIR.parent))
 UPDATE_LOG = Path("/tmp/poolkiosk_update.log")
 UPDATE_STATE_FILE = Path("/tmp/poolkiosk_update_state.txt")
+# Handle to the currently running update subprocess (None if idle/finished).
+_update_proc: Optional[subprocess.Popen] = None
 load_dotenv(ROOT_DIR / ".env")
 
 mongo_url = os.environ["MONGO_URL"]
@@ -519,7 +521,13 @@ def _read_update_state() -> str:
     return "idle"
 
 
+def _is_update_running() -> bool:
+    global _update_proc
+    return _update_proc is not None and _update_proc.poll() is None
+
+
 def _spawn_update(mode: str):
+    global _update_proc
     script = POOLKIOSK_HOME / "update.sh"
     if not script.exists():
         _write_update_state("failed")
@@ -530,7 +538,7 @@ def _spawn_update(mode: str):
         return False
     UPDATE_LOG.write_text("")
     _write_update_state("running")
-    subprocess.Popen(
+    _update_proc = subprocess.Popen(
         ["bash", str(script), mode],
         stdout=open(UPDATE_LOG, "a"),
         stderr=subprocess.STDOUT,
@@ -554,7 +562,7 @@ async def update_status():
 
 @api_router.post("/system/update/online")
 async def update_online():
-    if _read_update_state() == "running":
+    if _is_update_running():
         raise HTTPException(409, "Une mise à jour est déjà en cours.")
     if not _spawn_update("online"):
         raise HTTPException(500, "Script de mise à jour introuvable.")
@@ -563,7 +571,7 @@ async def update_online():
 
 @api_router.post("/system/update/usb")
 async def update_usb():
-    if _read_update_state() == "running":
+    if _is_update_running():
         raise HTTPException(409, "Une mise à jour est déjà en cours.")
     if not _spawn_update("usb"):
         raise HTTPException(500, "Script de mise à jour introuvable.")
