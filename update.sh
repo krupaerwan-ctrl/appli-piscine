@@ -61,7 +61,7 @@ if [ ! -d ".venv" ]; then
     python3 -m venv .venv
 fi
 .venv/bin/pip install --quiet --upgrade \
-    fastapi 'uvicorn[standard]' motor pymongo pydantic python-dotenv paho-mqtt
+    fastapi 'uvicorn[standard]' aiosqlite pydantic python-dotenv paho-mqtt
 
 echo "-- Recompilation du frontend (2-5 min)..."
 cd "$HOME_DIR/frontend"
