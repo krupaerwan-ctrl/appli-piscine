@@ -1,0 +1,40 @@
+{
+  "summary": "Tested new maintenance/update features on Appli Piscine (landscape 1024x600). Backend: 16/17 pytest pass (94%). All 4 new endpoints work (GET /system/update/status, POST /system/update/online, POST /system/update/usb, POST /system/exit-kiosk). Regression on /dashboard/summary, /sensors/latest, /equipment still green. Frontend: sidebar shows 'APPLI PISCINE', footer shows 'Appli piscine – Raspberry Pi', Settings maintenance section renders 3 buttons (update-online-btn, update-usb-btn, exit-kiosk-btn), tap → confirm/cancel toggle works, confirm triggers subprocess and log panel appears with colored status ('Échec de la mise à jour' in red + tail of update.sh log). One real backend bug found: the 'update already running' lock is file-based and races when subprocess fails quickly — concurrent calls both return 200 instead of one returning 409.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "POST /api/system/update/online (and /usb)", "issue": "Lock uses file marker (_read_update_state == 'running') set inside _spawn_update BEFORE Popen. In preview, update.sh fails almost instantly (~200ms, git pull no tracking branch), so consecutive/concurrent POSTs both read state != 'running' and both spawn. Reviewer expected 2nd rapid POST to return 409 — cannot be validated reliably in preview. Recommend an in-memory asyncio.Lock or module-level threading.Lock acquired at route entry, released only when subprocess exits."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": [
+      {"component": "SettingsScreen (or shared wrapper) → runtime error on mount", "issue": "Console error: 'Unexpected text node: . A text node cannot be a child of a <View>.' fires when navigating to Paramètres. Likely a stray whitespace/newline directly inside a <View> (e.g. between JSX children or a `{expr && ...}` returning a bare string). Reference: /app/frontend/src/screens/SettingsScreen.tsx — audit conditional children in the maintenance card block."},
+      {"component": "Deprecated prop (still present from iteration 1)", "issue": "Console warning: 'props.pointerEvents is deprecated. Use style.pointerEvents'. Reference: unknown (search codebase for pointerEvents= prop on View/Pressable)."}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_pool_kiosk.py",
+    "/app/backend/tests/test_update_endpoints.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [
+    "Replace file-based update lock with an in-process asyncio.Lock/threading.Lock in server.py so concurrent POST /api/system/update/online reliably returns 409 for the 2nd caller.",
+    "Fix stray text-node child inside a <View> in SettingsScreen.tsx (console error on mount) — check conditional rendering blocks and any bare whitespace between JSX siblings.",
+    "Migrate remaining `pointerEvents` prop usage to `style.pointerEvents` (leftover warning from iteration 1)."
+  ],
+  "critical_code_review_comments": [
+    "server.py `_spawn_update` uses `open(UPDATE_LOG, 'a')` as stdout without a matching close on the parent side — Popen keeps the FD; acceptable for one-shot subprocess but leaks per invocation. Consider `with open(...)` + pass fd to Popen or use asyncio.subprocess.",
+    "The exit-kiosk endpoint always returns 200 even if `pkill` finds no chromium process (pkill exit-code not inspected). Acceptable for the kiosk UX but the response is not truthful when Chromium isn't running.",
+    "POOLKIOSK_HOME defaults to `/app` (server.py parent) rather than /home/pi/poolkiosk, so update.sh actually runs against the repo checkout in preview. This is why online mode fails at `git pull` (no tracking branch) rather than at the HOME_DIR check as the review request assumed."
+  ],
+  "updated_files": ["/app/backend/tests/test_update_endpoints.py"],
+  "success_rate": {"backend": "94% (16/17)", "frontend": "100% (all new flows pass)"},
+  "seed_data_creation": "None. /tmp/poolkiosk_update.log and /tmp/poolkiosk_update_state.txt are written by the app during tests — expected side effect.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "New endpoints tested: /api/system/update/{status,online,usb} and /api/system/exit-kiosk. Test file: /app/backend/tests/test_update_endpoints.py. Lock test intentionally kept strict (expects 409) to keep the bug visible until main agent fixes it. Frontend testIDs added: update-online-btn, update-online-btn-cancel, update-online-btn-confirm, update-usb-btn, update-usb-btn-cancel, update-usb-btn-confirm, exit-kiosk-btn, exit-kiosk-btn-cancel, exit-kiosk-btn-confirm. Viewport is landscape 1024x600 (kiosk).",
+  "rca_of_issue": "Lock race: `_spawn_update` writes 'running' to a file THEN spawns Popen. `_read_update_state` reads the file each call. In preview, subprocess writes 'failed' to the same file within ~200ms (git pull fast-fail), so any follow-up POST sees state='failed' and starts a new update. Concurrent threads can also both read state before either writes 'running'. Fix: guard the route with a module-level threading.Lock (or asyncio.Lock) acquired at route entry, released only when the subprocess terminates (spawn a watcher task/thread that does proc.wait() then releases). Keep the file marker for FE polling but do not rely on it as the concurrency primitive."
+}

@@ -33,7 +33,7 @@ export const Sidebar: React.FC<Props> = ({ active, onSelect, mqttOk, systemOk })
     <View style={styles.wrap} testID="sidebar">
       <View style={styles.brand}>
         <Ionicons name="water" size={26} color={COLORS.brand} />
-        <Text style={styles.brandText}>PISCINE</Text>
+        <Text style={styles.brandText}>APPLI PISCINE</Text>
       </View>
       <ScrollView style={{ flex: 1 }} showsVerticalScrollIndicator={false}>
         {NAV_ITEMS.map((item) => {
@@ -86,7 +86,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: SPACING.lg,
     paddingBottom: SPACING.xl,
   },
-  brandText: { color: COLORS.text, fontSize: FS.xl, fontWeight: "700", letterSpacing: 2 },
+  brandText: { color: COLORS.text, fontSize: FS.lg, fontWeight: "700", letterSpacing: 2 },
   item: {
     flexDirection: "row",
     alignItems: "center",

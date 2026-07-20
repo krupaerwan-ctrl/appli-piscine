@@ -193,7 +193,7 @@ export default function Index() {
           <View style={{ flex: 1 }}>{renderContent()}</View>
           <View style={styles.footer}>
             <Text style={styles.footerText}>
-              🍓 Système piscine connecté – Raspberry Pi
+              🍓 Appli piscine – Raspberry Pi
             </Text>
           </View>
         </View>

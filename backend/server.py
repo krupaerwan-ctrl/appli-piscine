@@ -16,6 +16,7 @@ import asyncio
 import logging
 import random
 import math
+import subprocess
 from pathlib import Path
 from pydantic import BaseModel, Field
 from typing import List, Optional, Dict, Any
@@ -23,13 +24,16 @@ import uuid
 from datetime import datetime, timezone, timedelta
 
 ROOT_DIR = Path(__file__).parent
+POOLKIOSK_HOME = Path(os.environ.get("POOLKIOSK_HOME", ROOT_DIR.parent))
+UPDATE_LOG = Path("/tmp/poolkiosk_update.log")
+UPDATE_STATE_FILE = Path("/tmp/poolkiosk_update_state.txt")
 load_dotenv(ROOT_DIR / ".env")
 
 mongo_url = os.environ["MONGO_URL"]
 client = AsyncIOMotorClient(mongo_url)
 db = client[os.environ["DB_NAME"]]
 
-app = FastAPI(title="Pool Kiosk API")
+app = FastAPI(title="Appli Piscine API")
 api_router = APIRouter(prefix="/api")
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -306,7 +310,7 @@ def start_mqtt_bridge():
 # ==============================================================
 @api_router.get("/")
 async def root():
-    return {"service": "pool-kiosk", "ok": True}
+  return {"service": "appli-piscine", "ok": True}
 
 
 @api_router.get("/sensors/latest")
@@ -497,6 +501,85 @@ async def dashboard_summary():
 
 
 # ==============================================================
+# SYSTEM UPDATE / EXIT KIOSK
+# ==============================================================
+def _write_update_state(state: str):
+    try:
+        UPDATE_STATE_FILE.write_text(state)
+    except Exception as e:
+        logger.warning("update state write failed: %s", e)
+
+
+def _read_update_state() -> str:
+    try:
+        if UPDATE_STATE_FILE.exists():
+            return UPDATE_STATE_FILE.read_text().strip() or "idle"
+    except Exception:
+        pass
+    return "idle"
+
+
+def _spawn_update(mode: str):
+    script = POOLKIOSK_HOME / "update.sh"
+    if not script.exists():
+        _write_update_state("failed")
+        UPDATE_LOG.write_text(
+            f"Script d'update introuvable : {script}\n"
+            "Assurez-vous d'avoir la dernière version du dépôt sur le Raspberry."
+        )
+        return False
+    UPDATE_LOG.write_text("")
+    _write_update_state("running")
+    subprocess.Popen(
+        ["bash", str(script), mode],
+        stdout=open(UPDATE_LOG, "a"),
+        stderr=subprocess.STDOUT,
+        cwd=str(POOLKIOSK_HOME),
+        env={**os.environ, "POOLKIOSK_HOME": str(POOLKIOSK_HOME)},
+        start_new_session=True,
+    )
+    return True
+
+
+@api_router.get("/system/update/status")
+async def update_status():
+    log = ""
+    if UPDATE_LOG.exists():
+        try:
+            log = UPDATE_LOG.read_text()[-4000:]
+        except Exception:
+            pass
+    return {"state": _read_update_state(), "log": log}
+
+
+@api_router.post("/system/update/online")
+async def update_online():
+    if _read_update_state() == "running":
+        raise HTTPException(409, "Une mise à jour est déjà en cours.")
+    if not _spawn_update("online"):
+        raise HTTPException(500, "Script de mise à jour introuvable.")
+    return {"ok": True, "state": "running"}
+
+
+@api_router.post("/system/update/usb")
+async def update_usb():
+    if _read_update_state() == "running":
+        raise HTTPException(409, "Une mise à jour est déjà en cours.")
+    if not _spawn_update("usb"):
+        raise HTTPException(500, "Script de mise à jour introuvable.")
+    return {"ok": True, "state": "running"}
+
+
+@api_router.post("/system/exit-kiosk")
+async def exit_kiosk():
+    try:
+        subprocess.Popen(["pkill", "-f", "chromium"], start_new_session=True)
+        return {"ok": True}
+    except Exception as e:
+        raise HTTPException(500, f"Impossible de quitter le kiosque : {e}")
+
+
+# ==============================================================
 # APP LIFECYCLE
 # ==============================================================
 app.include_router(api_router)
@@ -514,7 +597,7 @@ async def _startup():
     await init_defaults()
     asyncio.create_task(sensor_simulator_loop())
     start_mqtt_bridge()
-    logger.info("Pool kiosk backend ready.")
+    logger.info("Appli piscine backend ready.")
 
 
 @app.on_event("shutdown")
