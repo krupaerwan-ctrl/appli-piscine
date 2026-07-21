@@ -31,7 +31,7 @@ const SOURCE_MAP: Record<string, { label: string; color: string }> = {
   mqtt: { label: "Zigbee", color: COLORS.metricSalinity },
 };
 
-export const EquipmentPage: React.FC<{ data: any; reload: () => void }> = ({ data, reload }) => {
+export const EquipmentPage: React.FC<{ data: any; reload: () => void; onToggleEquipment: (id: string, next: boolean) => Promise<void> }> = ({ data, reload, onToggleEquipment }) => {
   const [events, setEvents] = useState<EqEvent[]>([]);
   const [filter, setFilter] = useState<string>("all");
 
@@ -51,9 +51,8 @@ export const EquipmentPage: React.FC<{ data: any; reload: () => void }> = ({ dat
   }, [loadEvents]);
 
   async function toggle(id: string, next: boolean) {
-    try { await api.toggleEquipment(id, next); } catch {}
-    reload();
-    setTimeout(loadEvents, 500);
+    await onToggleEquipment(id, next);
+    setTimeout(loadEvents, 700);
   }
 
   return (

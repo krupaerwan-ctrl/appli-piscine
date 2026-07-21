@@ -16,7 +16,7 @@ const W: Record<string, number> = {
   equipment: 280, schedule: 280, system: 280, alerts: 280,
 };
 
-export const DashboardScreen: React.FC<Props> = ({ data, reload }) => {
+export const DashboardScreen: React.FC<Props> = ({ data, reload, onToggleEquipment }) => {
   const [history, setHistory] = useState<any[]>([]);
   useEffect(() => {
     api.history("temp", 24).then((r) => {
@@ -35,12 +35,7 @@ export const DashboardScreen: React.FC<Props> = ({ data, reload }) => {
   (data.sensors || []).forEach((r: any) => (sensors[r.metric] = r));
 
   async function toggleEquipment(id: string, next: boolean) {
-    try {
-      await api.toggleEquipment(id, next);
-    } catch (e: any) {
-      // Trigger a reload to re-sync UI state
-    }
-    reload();
+    await onToggleEquipment(id, next);
   }
 
   const orderedWidgets = [...(data.widgets || [])]

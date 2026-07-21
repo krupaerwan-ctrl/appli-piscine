@@ -82,7 +82,36 @@ export default function Index() {
   const [idle, setIdle] = useState(false);
   const [alerts, setAlerts] = useState<any[]>([]);
   const [history24, setHistory24] = useState<any[]>([]);
+  const [toast, setToast] = useState<string | null>(null);
   const idleTimer = useRef<any>(null);
+  const toastTimer = useRef<any>(null);
+
+  // Central equipment toggle with OPTIMISTIC UI + coupling mirrored client-side
+  const handleToggleEquipment = useCallback(async (id: string, next: boolean) => {
+    setData((prev: any) => {
+      if (!prev?.equipment) return prev;
+      const equipment = prev.equipment.map((e: any) => {
+        if (e.id === id) return { ...e, state: next };
+        // Coupling: stopping pump also stops electrolyseur instantly
+        if (id === "filtration" && !next && e.id === "electrolyseur")
+          return { ...e, state: false };
+        return e;
+      });
+      return { ...prev, equipment };
+    });
+    try {
+      await api.toggleEquipment(id, next);
+    } catch (e: any) {
+      // Backend refused (e.g. electro without pump) — show a toast, reload will revert UI
+      const msg = String(e?.message || "").includes("électrolyseur")
+        ? "L'électrolyseur ne peut pas fonctionner sans la pompe. Démarrez d'abord la filtration."
+        : "Action refusée par le système.";
+      if (toastTimer.current) clearTimeout(toastTimer.current);
+      setToast(msg);
+      toastTimer.current = setTimeout(() => setToast(null), 4500);
+    }
+    reload();
+  }, []);
 
   // -------- Polling summary + alerts every 5s --------
   const reload = useCallback(async () => {
@@ -142,9 +171,9 @@ export default function Index() {
     }
     switch (active) {
       case "home":
-        return <DashboardScreen data={data} reload={reload} />;
+        return <DashboardScreen data={data} reload={reload} onToggleEquipment={handleToggleEquipment} />;
       case "equipment":
-        return <EquipmentPage data={data} reload={reload} />;
+        return <EquipmentPage data={data} reload={reload} onToggleEquipment={handleToggleEquipment} />;
       case "schedule":
         return (
           <ScheduleScreen
@@ -190,6 +219,11 @@ export default function Index() {
           <TopHeader outdoorTemp={sensors.outdoor_temp?.value ?? 28} title={headerTitle(active)} />
           <View style={{ flex: 1, paddingRight: Platform.OS === "web" ? 56 : 0 }}>{renderContent()}</View>
           <TouchScrollbar />
+          {toast && (
+            <View style={styles.toast} testID="global-toast">
+              <Text style={styles.toastText}>{toast}</Text>
+            </View>
+          )}
           <View style={styles.footer}>
             <Text style={styles.footerText}>
               🍓 Appli piscine – Raspberry Pi
@@ -219,4 +253,11 @@ const styles = StyleSheet.create({
     alignItems: "center", justifyContent: "center",
   },
   footerText: { color: COLORS.textMuted, fontSize: FS.sm },
+  toast: {
+    position: "absolute", bottom: 60, left: "50%", transform: [{ translateX: -220 }],
+    width: 440, backgroundColor: COLORS.error, paddingHorizontal: SPACING.lg,
+    paddingVertical: SPACING.md, borderRadius: 12, zIndex: 200,
+    shadowColor: "#000", shadowOpacity: 0.4, shadowRadius: 10, shadowOffset: { width: 0, height: 4 },
+  },
+  toastText: { color: "#fff", fontSize: FS.base, textAlign: "center", fontWeight: "600" },
 });
