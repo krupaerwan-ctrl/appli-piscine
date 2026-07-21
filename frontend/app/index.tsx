@@ -15,6 +15,7 @@ import { HistoryScreen } from "../src/screens/HistoryScreen";
 import { SettingsScreen } from "../src/screens/SettingsScreen";
 import { ZigbeeScreen } from "../src/screens/ZigbeeScreen";
 import { EquipmentPage } from "../src/screens/EquipmentPage";
+import { TouchScrollbar } from "../src/components/TouchScrollbar";
 import {
   TempWaveCard, MetricCard, HistoryChartCard, EquipmentCard, PressureCard,
 } from "../src/components/Widgets";
@@ -187,7 +188,8 @@ export default function Index() {
         />
         <View style={{ flex: 1 }}>
           <TopHeader outdoorTemp={sensors.outdoor_temp?.value ?? 28} title={headerTitle(active)} />
-          <View style={{ flex: 1 }}>{renderContent()}</View>
+          <View style={{ flex: 1, paddingRight: 56 }}>{renderContent()}</View>
+          <TouchScrollbar />
           <View style={styles.footer}>
             <Text style={styles.footerText}>
               🍓 Appli piscine – Raspberry Pi

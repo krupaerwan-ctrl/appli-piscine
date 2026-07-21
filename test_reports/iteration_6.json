@@ -1,0 +1,28 @@
+{
+  "summary": "Iteration 6 - TouchScrollbar overlay (Raspberry Pi kiosk 1024x600). All 9 acceptance criteria PASS. testID=touch-scrollbar is mounted on every screen (verified home, settings, history, equipment, zigbee). The 4 sub-testIDs (touch-scrollbar-up/track/handle/down) render correctly. Auto-attach to the largest scrollable div works: on Settings (scrollHeight=1234, clientHeight=504) a single tap on touch-scrollbar-down scrolled from 0 → 353 (~353px, ≥100px requirement met, matches min(clientHeight*0.7, 400) = min(352, 400) = 352). After 6 taps the max scroll (730) is reached. Tapping touch-scrollbar-up scrolled back 730 → 377. The handle position/height updates in real time (top=222.431px, height=153.569px when scrolled near bottom - proportional to scroll). Navigation between nav-settings, nav-history, nav-equipment, nav-zigbee, nav-home all re-attach the overlay to the new scrollable container without any crash. Equipment down-click also verified (0 → 353). Only benign warning is 'props.pointerEvents is deprecated' from a third-party lib (already known, non-blocking).",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": [
+      {"component": "props.pointerEvents", "issue": "Console warning: 'props.pointerEvents is deprecated. Use style.pointerEvents' - originates from a third-party lib (gesture-handler/reanimated). Non-blocking. Same as iteration 5."}
+    ]
+  },
+  "test_report_links": [
+    "/app/test_reports/iteration_6.json"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "TouchScrollbar uses requestAnimationFrame polling at ~60fps calling findScrollable() which walks the entire #root subtree every frame. On a Raspberry Pi this can be CPU-heavy. Consider throttling to ~10fps or subscribing to a scroll listener on the discovered element and only re-scanning on route change / mutation.",
+    "onHandlePointerMove/Down/Up are attached via a spread `{...({onPointerDown, ...} as any)}` on a RN <View>. This works on web because RN-Web forwards unknown DOM props, but it's fragile - a native-style View doesn't take onPointerDown. Fine for a web-only kiosk (Platform.OS !== 'web' returns null early), just note the intent in a code comment.",
+    "The overlay is inside index.tsx above the footer; paddingRight:56 on the content wrapper is applied unconditionally, even on native. Non-blocking but consider guarding with Platform.OS === 'web'."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "not tested (per request)", "frontend": "100% (9/9 acceptance criteria)"},
+  "seed_data_creation": "None - used existing default seed (equipment, zigbee, schedules, widgets).",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "TouchScrollbar is mounted globally in app/index.tsx above the footer with paddingRight:56 on the content wrapper to avoid overlap. It auto-attaches to the largest scrollable div under #root via a rAF poll. testIDs: touch-scrollbar (root View), touch-scrollbar-up, touch-scrollbar-track, touch-scrollbar-handle (only rendered when visible=true), touch-scrollbar-down. On Playwright web, page.click on the Pressable buttons triggers onPress -> scrollBy with smooth behaviour; the actual scrollTop changes ~500ms after the click, so use wait_for_timeout(700) after each click.",
+  "rca_of_issue": "N/A - feature verified working."
+}
