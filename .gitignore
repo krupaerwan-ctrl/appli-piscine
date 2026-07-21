@@ -86,3 +86,7 @@ android-sdk/
 credentials.json
 *.key
 .credentials
+
+# SQLite runtime DB (never commit)
+backend/poolkiosk.db
+backend/poolkiosk.db-*

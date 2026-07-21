@@ -21,9 +21,22 @@ cd "$HOME_DIR" || fail "HOME_DIR introuvable: $HOME_DIR"
 
 if [ "$MODE" = "online" ]; then
     echo "-- Récupération de la dernière version depuis GitHub..."
+    # Untrack the SQLite DB in case an old commit still has it, then stash
+    # any local changes so 'git pull' never conflicts with the running DB.
+    git rm --cached backend/poolkiosk.db 2>/dev/null || true
+    git rm --cached backend/poolkiosk.db-shm 2>/dev/null || true
+    git rm --cached backend/poolkiosk.db-wal 2>/dev/null || true
+    git stash push --include-untracked -m "poolkiosk-auto-$(date +%s)" >/dev/null 2>&1 || true
     if ! git pull --ff-only 2>&1; then
+        # Try to restore stash before failing
+        git stash pop 2>/dev/null || true
         fail "git pull a échoué (vérifiez la connexion Internet)."
     fi
+    # Restore ONLY the untracked runtime files (the DB), never touch code files
+    git stash pop 2>/dev/null || true
+    # If the pull re-added the DB in the tree (from history), keep local version:
+    git checkout HEAD -- . 2>/dev/null || true
+    # Nothing to do beyond that; the DB file (untracked now) is preserved
 
 elif [ "$MODE" = "usb" ]; then
     echo "-- Recherche d'une clé USB avec poolkiosk-update*.zip..."

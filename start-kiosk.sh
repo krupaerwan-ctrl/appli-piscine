@@ -29,7 +29,7 @@ if [ -f "$PREF" ]; then
     sed -i 's/"exit_type":"Crashed"/"exit_type":"Normal"/' "$PREF" 2>/dev/null
 fi
 
-# Launch Chromium in kiosk mode
+# Launch Chromium in kiosk mode (stderr suppressed: harmless EGL/GL warnings on Pi 3B+)
 exec "$CHROMIUM" \
     --kiosk \
     --noerrdialogs \
@@ -41,5 +41,9 @@ exec "$CHROMIUM" \
     --disable-translate \
     --disable-pinch \
     --overscroll-history-navigation=0 \
+    --disable-gpu-driver-bug-workarounds \
+    --disable-logging \
+    --log-level=3 \
+    --silent-debugger-extension-api \
     --incognito \
-    http://127.0.0.1:3000
+    http://127.0.0.1:3000 2>/dev/null
