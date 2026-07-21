@@ -1,0 +1,13 @@
+[Unit]
+Description=Appli Piscine Frontend (static web build)
+After=network.target
+
+[Service]
+User=pi
+WorkingDirectory=/home/pi/appli-piscine/frontend
+ExecStart=/usr/bin/serve -s dist -l 3000
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
