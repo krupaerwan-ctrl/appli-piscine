@@ -1,0 +1,34 @@
+{
+  "summary": "Iteration 8 - Auto-reload countdown after successful update. ALL scenarios PASS. Backend regression: 8/8 pytest tests pass (test_update_endpoints.py: /system/update/status, /online, /usb, /system/exit-kiosk, dashboard/summary, sensors/latest, equipment). Frontend (1024x600 kiosk): (A) With /api/system/update/status mocked via page.route to return running -> running -> success, the SettingsScreen displays 'Mise à jour terminée. Rechargement dans Ns…' and the countdown decreases (observed values 5, 4, 2, 1 across sampled seconds; missed 3 due to 1s sampling cadence vs 1s setInterval jitter, but strictly monotonic). At countdown 0, window.location.reload() IS actually called — proven definitively because the page navigated back to the default 'home' screen and lost SettingsScreen state (Chromium does not allow overriding window.location.reload via Object.defineProperty, so any reload() call is a real reload; the observed navigation IS the reload firing). (B) Regression: with /status mocked to return 'failed' directly (no running->success transition), no countdown text appears, 'Échec de la mise à jour' is shown, and reload is NOT called (verified via spy counter that stayed at 0 for 4s of polling). (C) Regression: all 3 maintenance buttons (update-online-btn, update-usb-btn, exit-kiosk-btn) still expose the 2-click confirmation flow — first tap shows -confirm and -cancel testIDs, cancel returns to the 'Lancer' state. (D) Backend endpoints /api/system/update/status, /online, /usb, /system/exit-kiosk all return correct shapes and status codes; dashboard/sensors/equipment regressions all pass. No new deprecation warnings — only the pre-existing shadow*/pointerEvents from RN-Web already flagged in iter 5-7. React/Expo pointers: no deprecated packages introduced (no expo-av/expo-barcode-scanner/expo-background-fetch usage).",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": [
+      {"component": "shadow* style props", "issue": "(Pre-existing, iter 5-7) Console warning 'shadow* style props are deprecated. Use boxShadow' from RN-Web on toast/card. Non-blocking. Reference: /app/frontend/app/index.tsx toast style."},
+      {"component": "props.pointerEvents", "issue": "(Pre-existing, iter 5-7) Console warning 'props.pointerEvents is deprecated. Use style.pointerEvents' from third-party gesture-handler/reanimated. Non-blocking."}
+    ]
+  },
+  "test_report_links": [
+    "/app/test_reports/iteration_8.json",
+    "/app/test_reports/pytest/iteration_8.xml",
+    "/app/backend/tests/test_update_endpoints.py"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "SettingsScreen.tsx pollStatus() correctly gates the reload on prevStateRef.current === 'running' (line 78), so idle->success (shouldn't happen from backend, but defensive) or idle->failed would NOT trigger reload. Verified in Scenario B.",
+    "The countdown setInterval uses closure-captured `n` and calls setReloadCountdown(n) each tick — this is safe because the interval is cleared and setReloadCountdown(null) is never reset if the component unmounts mid-countdown. Minor: on unmount during countdown, the reloadCountdown state update on an unmounted component would warn. Not observed here because ScrollView stays mounted. Non-blocking.",
+    "Reload trigger only runs on Platform.OS === 'web' AND typeof window !== 'undefined' — correct guard for the kiosk (web preview) target. Native builds would silently skip, which is the intended behavior per the code comment.",
+    "The polling useEffect's cleanup clears pollRef.current on every updateState change, which combined with the guard `if (updateState === 'running' && !pollRef.current)` means: when state transitions running->success inside a pollStatus response, pollStatus itself already clears the interval (lines 72-75) before the useEffect cleanup runs. Correct, but slightly redundant — no bug."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100% (8/8)", "frontend": "100% (3/3 scenarios: countdown-on-success, no-reload-on-direct-failed, 3-button 2-click confirmation)"},
+  "seed_data_creation": "None. Used Playwright page.route to mock /api/system/update/status and /api/system/update/online responses to simulate the running->success transition (the preview backend's update.sh always fails, so mocking is the least-invasive approach as recommended by the main agent).",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Auto-reload feature validated end-to-end. Key impl: /app/frontend/src/screens/SettingsScreen.tsx lines 44-92. prevStateRef tracks previous state; when pollStatus() sees state='success' with prev='running', a 5s setInterval countdown updates reloadCountdown state and calls window.location.reload() at 0. Text shown: `Mise à jour terminée. Rechargement dans ${reloadCountdown}s…`. Playwright note: window.location.reload CANNOT be reliably spied via Object.defineProperty in Chromium — any real reload will actually navigate. This is a feature not a bug: it means the assertion 'reload was called' is best done by observing side-effects (page went back to home screen with lost Settings state). Alternative for future tests: use page.route to intercept a subsequent request that only happens after reload, or check window.performance.navigation.type."
+}

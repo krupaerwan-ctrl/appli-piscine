@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
-import { View, Text, StyleSheet, TextInput, Pressable, ScrollView, Switch } from "react-native";
+import { View, Text, StyleSheet, TextInput, Pressable, ScrollView, Switch, Platform } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { COLORS, SPACING, RADIUS, FS } from "../lib/theme";
 import { api } from "../lib/api";
@@ -41,8 +41,10 @@ export const SettingsScreen: React.FC<Props> = ({ settings, onSaved }) => {
   const [updateState, setUpdateState] = useState<string>("idle");
   const [updateLog, setUpdateLog] = useState<string>("");
   const [confirmMode, setConfirmMode] = useState<null | "online" | "usb" | "exit">(null);
+  const [reloadCountdown, setReloadCountdown] = useState<number | null>(null);
   const pollRef = useRef<any>(null);
   const logScroll = useRef<any>(null);
+  const prevStateRef = useRef<string>("idle");
 
   async function save() {
     setSaving(true);
@@ -71,6 +73,23 @@ export const SettingsScreen: React.FC<Props> = ({ settings, onSaved }) => {
         clearInterval(pollRef.current);
         pollRef.current = null;
       }
+      // On successful update transition: trigger full-page reload after 5s so
+      // the kiosk picks up the freshly-built frontend files automatically.
+      if (r.state === "success" && prevStateRef.current === "running") {
+        if (Platform.OS === "web" && typeof window !== "undefined") {
+          let n = 5;
+          setReloadCountdown(n);
+          const tick = setInterval(() => {
+            n -= 1;
+            setReloadCountdown(n);
+            if (n <= 0) {
+              clearInterval(tick);
+              try { window.location.reload(); } catch {}
+            }
+          }, 1000);
+        }
+      }
+      prevStateRef.current = r.state;
     } catch (e) { /* backend may be restarting */ }
   };
 
@@ -235,7 +254,11 @@ export const SettingsScreen: React.FC<Props> = ({ settings, onSaved }) => {
             />
             <Text style={s.updateStateText}>
               {updateState === "running" && "Mise à jour en cours…"}
-              {updateState === "success" && "Mise à jour terminée avec succès"}
+              {updateState === "success" && (
+                reloadCountdown !== null
+                  ? `Mise à jour terminée. Rechargement dans ${reloadCountdown}s…`
+                  : "Mise à jour terminée avec succès"
+              )}
               {updateState === "failed" && "Échec de la mise à jour"}
               {updateState === "idle" && "En attente"}
             </Text>
