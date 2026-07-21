@@ -18,6 +18,38 @@ import {
 } from "../src/components/Widgets";
 import { api } from "../src/lib/api";
 
+// --- Kiosk touch/no-cursor styles (web build on Raspberry Pi) ---
+if (Platform.OS === "web" && typeof document !== "undefined") {
+  const styleId = "kiosk-touch-styles";
+  if (!document.getElementById(styleId)) {
+    const style = document.createElement("style");
+    style.id = styleId;
+    style.textContent = `
+      html, body, #root, * {
+        cursor: none !important;
+        -webkit-user-select: none !important;
+        user-select: none !important;
+        -webkit-tap-highlight-color: transparent !important;
+        -webkit-touch-callout: none !important;
+        touch-action: manipulation;
+        overscroll-behavior: contain;
+      }
+      input, textarea {
+        cursor: text !important;
+        -webkit-user-select: text !important;
+        user-select: text !important;
+      }
+      /* Smooth touch scroll on webkit */
+      div[style*="overflow"] { -webkit-overflow-scrolling: touch !important; }
+      /* Kill focus outlines that flash on touch */
+      *:focus { outline: none !important; }
+      /* Hide native scrollbars in kiosk mode */
+      ::-webkit-scrollbar { width: 0; height: 0; }
+    `;
+    document.head.appendChild(style);
+  }
+}
+
 function headerTitle(key: string): string {
   switch (key) {
     case "home": return "Tableau de bord";
