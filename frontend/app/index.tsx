@@ -188,7 +188,7 @@ export default function Index() {
         />
         <View style={{ flex: 1 }}>
           <TopHeader outdoorTemp={sensors.outdoor_temp?.value ?? 28} title={headerTitle(active)} />
-          <View style={{ flex: 1, paddingRight: 56 }}>{renderContent()}</View>
+          <View style={{ flex: 1, paddingRight: Platform.OS === "web" ? 56 : 0 }}>{renderContent()}</View>
           <TouchScrollbar />
           <View style={styles.footer}>
             <Text style={styles.footerText}>

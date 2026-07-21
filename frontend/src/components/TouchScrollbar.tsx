@@ -44,30 +44,34 @@ export const TouchScrollbar: React.FC = () => {
     return best;
   };
 
-  // Poll ~30fps to keep the handle in sync with the scroll position
+  // Poll ~10fps to keep the handle in sync (throttled — light on the Pi 3B+ CPU)
   useEffect(() => {
     if (Platform.OS !== "web") return;
+    let lastTick = 0;
     let raf = 0;
-    const tick = () => {
-      const el = findScrollable();
-      activeEl.current = el;
-      if (el) {
-        const contentH = el.scrollHeight;
-        const visibleH = el.clientHeight;
-        const scrollTop = el.scrollTop;
-        const maxScroll = contentH - visibleH;
-        if (maxScroll > 20 && trackH > 0) {
-          const trackUseful = Math.max(80, trackH);
-          const hh = Math.max(80, (visibleH / contentH) * trackUseful);
-          const hy = maxScroll > 0 ? (scrollTop / maxScroll) * (trackUseful - hh) : 0;
-          setHandleH(hh);
-          setHandleTop(hy);
-          setVisible(true);
+    const tick = (now: number) => {
+      if (now - lastTick >= 100) {   // ~10 Hz is plenty
+        lastTick = now;
+        const el = findScrollable();
+        activeEl.current = el;
+        if (el) {
+          const contentH = el.scrollHeight;
+          const visibleH = el.clientHeight;
+          const scrollTop = el.scrollTop;
+          const maxScroll = contentH - visibleH;
+          if (maxScroll > 20 && trackH > 0) {
+            const trackUseful = Math.max(80, trackH);
+            const hh = Math.max(80, (visibleH / contentH) * trackUseful);
+            const hy = maxScroll > 0 ? (scrollTop / maxScroll) * (trackUseful - hh) : 0;
+            setHandleH(hh);
+            setHandleTop(hy);
+            setVisible(true);
+          } else {
+            setVisible(false);
+          }
         } else {
           setVisible(false);
         }
-      } else {
-        setVisible(false);
       }
       raf = requestAnimationFrame(tick);
     };
