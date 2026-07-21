@@ -1,0 +1,37 @@
+{
+  "summary": "Regression check after (1) module-level kiosk-touch-styles CSS injection in app/index.tsx and (2) SQLite DB untracking + update.sh git stash refactor. NO REGRESSIONS INTRODUCED. Backend: 9/9 pytest pass (100%). GET /api/dashboard/summary returns 6 sensors + 4 equipment + 3 schedules + 10 widgets as expected. POST /api/equipment/filtration/toggle and PUT /api/settings work. Backend starts on SQLite only (no MongoDB imports, DB auto-created at /app/backend/poolkiosk.db on startup). Frontend loads with 0 JS errors; kiosk-touch-styles style tag is present in <head>, body cursor='none', html cursor='none', touch-action='manipulation', user-select='none'. All 8 sidebar screens navigate (Accueil, Température, Qualité de l'eau, Équipements, Programmation, Historique, Alertes, Widgets, Paramètres). Settings screen scroll works (scrollTop 0→400 on scrollable container of height 1234). TextInput override works: input.cursor='text', input.userSelect='text', clicking an input sets document.activeElement=INPUT. The 'Unexpected text node' console error reported in iteration_2 is no longer present — appears fixed. Two pre-existing warnings remain (pointerEvents deprecation, React 19 ref warning) — both already flagged in iteration_2, not introduced by these changes.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": [
+      {"component": "Deprecated pointerEvents prop (pre-existing, iteration_2)", "issue": "Console warning: 'props.pointerEvents is deprecated. Use style.pointerEvents'. Not caused by current changes but still present. Reference: unknown component, grep for pointerEvents= on View/Pressable."}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_pool_kiosk.py",
+    "/app/test_reports/pytest/iteration_3_regression.xml"
+  ],
+  "action_items": [
+    "Optional: migrate the remaining `pointerEvents` prop to `style.pointerEvents` (leftover from prior iterations, not tied to kiosk-touch-styles change).",
+    "Note: backend/poolkiosk.db is still visible in `git ls-files` in the preview repo checkout (added to .gitignore but was previously tracked). If the branch you pushed to GitHub really has it removed via `git rm`, this is fine — the .gitignore + `git rm --cached` in update.sh will handle Pis pulling the change. Confirm the commit that removed the DB was pushed."
+  ],
+  "critical_code_review_comments": [
+    "index.tsx module-level `if (Platform.OS === 'web' && typeof document !== 'undefined')` guard is correct and safe — the CSS injection is idempotent (checks getElementById) and will not crash under SSR/native (typeof document check). Verified in browser: no console error at module load, style tag present with 808 chars of CSS.",
+    "The CSS rule `input, textarea { cursor: text !important; ... user-select: text !important }` correctly overrides the global `cursor: none / user-select: none` for form fields. Verified via getComputedStyle on a Settings TextInput: cursor='text', userSelect='text', focus works.",
+    "update.sh correctly untracks backend/poolkiosk.db via `git rm --cached ... 2>/dev/null || true` before `git stash push --include-untracked`; safe against old commits that still contained the DB file.",
+    "update.sh does `git stash pop` after `git pull --ff-only` then `git checkout HEAD -- .` — the checkout will overwrite any code changes restored by stash pop; since stash was pushed BEFORE the pull, code changes stashed would be lost by the checkout. This is likely intentional (only preserve untracked runtime files like the DB) but worth documenting in a comment.",
+    ".gitignore correctly lists `backend/poolkiosk.db` and `backend/poolkiosk.db-*` (WAL/SHM). No leakage in `git status --porcelain` for the sidecar files."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100% (9/9 regression tests + manual curl on toggle/settings PUT)", "frontend": "100% (all 8 screens load, kiosk styles applied, scroll & input focus work)"},
+  "seed_data_creation": "None. Restored temp_target back to 28.0 after PUT smoke test.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Iteration 3 was a pure regression check; nothing broken. Two open items from iteration_2 remain unaddressed but are cosmetic: (a) pointerEvents deprecation warning, (b) file-based update lock race (only manifests in preview because update.sh fails fast — irrelevant on real Pi). The 'Unexpected text node' SettingsScreen error from iteration_2 is now gone (fixed). backend/poolkiosk.db is still git-tracked in the preview checkout — confirm the removal commit was pushed to GitHub before considering the (2)-change complete.",
+  "rca_of_issue": "N/A — no regression found. Kiosk-touch-styles injection is guarded by Platform.OS==='web' && typeof document!=='undefined' and by getElementById idempotency, so it is safe at module load. SQLite pure-mode boots cleanly (init_db creates schema + seeds defaults on empty DB)."
+}
