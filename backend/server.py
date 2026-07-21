@@ -189,6 +189,13 @@ async def init_db():
             device_type TEXT, assigned_role TEXT,
             online INTEGER NOT NULL DEFAULT 0, last_seen TEXT
         );
+
+        CREATE TABLE IF NOT EXISTS equipment_events (
+            id TEXT PRIMARY KEY, equipment_id TEXT NOT NULL,
+            action TEXT NOT NULL, source TEXT NOT NULL,
+            reason TEXT, ts TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_equip_events_ts ON equipment_events(ts);
         """)
         await db.commit()
 
@@ -285,6 +292,17 @@ async def create_alert(level: str, title: str, message: str):
     logger.warning("ALERT [%s] %s - %s", level, title, message)
 
 
+async def log_equipment_event(equipment_id: str, action: str, source: str, reason: Optional[str] = None):
+    """Log every ON/OFF change to the equipment_events journal."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            "INSERT INTO equipment_events(id,equipment_id,action,source,reason,ts) VALUES(?,?,?,?,?,?)",
+            (str(uuid.uuid4()), equipment_id, action, source, reason,
+             _iso(datetime.now(timezone.utc))),
+        )
+        await db.commit()
+
+
 # Track alert state per metric so we only fire on transitions (no spam)
 _alert_state: Dict[str, str] = {}
 
@@ -355,6 +373,8 @@ async def _stop_electrolyseur_and_pump(reason_pump: str):
         await db.execute("UPDATE equipment SET state=0 WHERE id='electrolyseur'")
         await db.execute("UPDATE equipment SET state=0 WHERE id='filtration'")
         await db.commit()
+    await log_equipment_event("electrolyseur", "off", "safety", reason_pump)
+    await log_equipment_event("filtration", "off", "safety", reason_pump)
     await create_alert("error", "Pompe arrêtée", reason_pump)
 
 
@@ -513,11 +533,23 @@ async def toggle_equipment(eid: str, payload: EquipmentToggle):
                     "Démarrez d'abord la filtration.",
                 )
 
-        cur = await db.execute("UPDATE equipment SET state=? WHERE id=?",
-                               (1 if payload.state else 0, eid))
-        await db.commit()
-        if cur.rowcount == 0:
+        # Check current state to detect a real change
+        cur = await db.execute("SELECT state FROM equipment WHERE id=?", (eid,))
+        prev_row = await cur.fetchone()
+        if not prev_row:
             raise HTTPException(404, "Equipment not found")
+        prev_state = bool(prev_row["state"])
+
+        await db.execute("UPDATE equipment SET state=? WHERE id=?",
+                         (1 if payload.state else 0, eid))
+        await db.commit()
+
+        # Log the change to the events journal (only if state changed)
+        if prev_state != payload.state:
+            await log_equipment_event(
+                eid, "on" if payload.state else "off", "user",
+                "Action manuelle depuis l'interface",
+            )
 
         # Business rule: stopping filtration also stops electrolyseur (safety)
         if eid == "filtration" and not payload.state:
@@ -526,10 +558,31 @@ async def toggle_equipment(eid: str, payload: EquipmentToggle):
             if elec and elec["state"]:
                 await db.execute("UPDATE equipment SET state=0 WHERE id='electrolyseur'")
                 await db.commit()
+                await log_equipment_event(
+                    "electrolyseur", "off", "coupling",
+                    "Arrêt automatique suite à l'arrêt de la pompe",
+                )
                 await create_alert("info", "Électrolyseur arrêté",
                                    "L'électrolyseur a été coupé automatiquement suite à l'arrêt de la pompe.")
 
     return {"id": eid, "state": payload.state}
+
+
+@api_router.get("/equipment/events")
+async def equipment_events(limit: int = 100, equipment_id: Optional[str] = None):
+    items = []
+    q = "SELECT id, equipment_id, action, source, reason, ts FROM equipment_events"
+    params: list = []
+    if equipment_id:
+        q += " WHERE equipment_id = ?"
+        params.append(equipment_id)
+    q += " ORDER BY ts DESC LIMIT ?"
+    params.append(limit)
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async for row in await db.execute(q, params):
+            items.append(dict(row))
+    return {"events": items}
 
 
 async def _schedules_list():

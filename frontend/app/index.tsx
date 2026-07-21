@@ -14,6 +14,7 @@ import { AlertsScreen } from "../src/screens/AlertsScreen";
 import { HistoryScreen } from "../src/screens/HistoryScreen";
 import { SettingsScreen } from "../src/screens/SettingsScreen";
 import { ZigbeeScreen } from "../src/screens/ZigbeeScreen";
+import { EquipmentPage } from "../src/screens/EquipmentPage";
 import {
   TempWaveCard, MetricCard, HistoryChartCard, EquipmentCard, PressureCard,
 } from "../src/components/Widgets";
@@ -52,8 +53,6 @@ if (Platform.OS === "web" && typeof document !== "undefined") {
 function headerTitle(key: string): string {
   switch (key) {
     case "home": return "Tableau de bord";
-    case "temperature": return "Température";
-    case "water": return "Qualité de l'eau";
     case "equipment": return "Équipements";
     case "schedule": return "Programmation";
     case "history": return "Historique";
@@ -132,55 +131,8 @@ export default function Index() {
     switch (active) {
       case "home":
         return <DashboardScreen data={data} reload={reload} />;
-      case "temperature":
-        return (
-          <ScrollView contentContainerStyle={{ padding: SPACING.xl, gap: SPACING.md }}
-            testID="temperature-screen">
-            <Text style={styles.pageTitle}>Température de l'eau</Text>
-            <View style={{ flexDirection: "row", gap: SPACING.md }}>
-              <TempWaveCard value={sensors.temp?.value ?? 0} target={data.settings.temp_target ?? 28} />
-              <View style={{ flex: 2 }}>
-                <HistoryChartCard points={history24} />
-              </View>
-            </View>
-          </ScrollView>
-        );
-      case "water":
-        return (
-          <ScrollView contentContainerStyle={{ padding: SPACING.xl, gap: SPACING.md }}
-            testID="water-screen">
-            <Text style={styles.pageTitle}>Qualité de l'eau</Text>
-            <View style={{ flexDirection: "row", gap: SPACING.md, flexWrap: "wrap" }}>
-              <MetricCard label="pH" icon="water-outline" color={COLORS.metricPh}
-                value={(sensors.ph?.value ?? 0).toFixed(2)} unit=""
-                target={`Consigne : ${data.settings.ph_min} – ${data.settings.ph_max}`}
-                min={6.8} max={7.6} current={sensors.ph?.value ?? 7} />
-              <MetricCard label="Redox (ORP)" icon="sync-circle" color={COLORS.metricOrp}
-                value={sensors.orp?.value ?? 0} unit="mV"
-                target={`Consigne : ${data.settings.orp_min} – ${data.settings.orp_max} mV`}
-                min={450} max={850} current={sensors.orp?.value ?? 650} />
-              <MetricCard label="Sel (Salinité)" icon="sparkles" color={COLORS.metricSalinity}
-                value={sensors.salinity?.value ?? 0} unit="ppm"
-                target={`Consigne : ${data.settings.salinity_min} – ${data.settings.salinity_max} ppm`}
-                min={2500} max={4500} current={sensors.salinity?.value ?? 3500} />
-              <PressureCard
-                pressure={sensors.pressure?.value ?? 0}
-                min={data.settings.pressure_min ?? 0.5}
-                max={data.settings.pressure_max ?? 1.5}
-              />
-            </View>
-          </ScrollView>
-        );
       case "equipment":
-        return (
-          <ScrollView contentContainerStyle={{ padding: SPACING.xl }} testID="equipment-screen">
-            <Text style={styles.pageTitle}>Équipements</Text>
-            <EquipmentCard
-              items={data.equipment || []}
-              onToggle={async (id, v) => { await api.toggleEquipment(id, v); reload(); }}
-            />
-          </ScrollView>
-        );
+        return <EquipmentPage data={data} reload={reload} />;
       case "schedule":
         return (
           <ScheduleScreen

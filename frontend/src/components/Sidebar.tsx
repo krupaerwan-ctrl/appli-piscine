@@ -11,8 +11,6 @@ export type NavItem = {
 
 export const NAV_ITEMS: NavItem[] = [
   { key: "home", label: "Accueil", icon: "home" },
-  { key: "temperature", label: "Température", icon: "thermometer" },
-  { key: "water", label: "Qualité de l'eau", icon: "flask" },
   { key: "equipment", label: "Équipements", icon: "settings" },
   { key: "zigbee", label: "Appareils Zigbee", icon: "hardware-chip" },
   { key: "schedule", label: "Programmation", icon: "calendar" },
