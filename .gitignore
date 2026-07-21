@@ -91,3 +91,6 @@ credentials.json
 # SQLite runtime DB (never commit)
 backend/poolkiosk.db
 backend/poolkiosk.db-*
+.env
+.env.*
+*.env
