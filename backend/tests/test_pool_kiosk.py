@@ -130,3 +130,121 @@ class TestSystem:
         d = r.json()
         for k in ("zigbee", "mqtt", "sensors", "last_update"):
             assert k in d
+
+
+
+# --- Zigbee devices (NEW feature) ---
+class TestZigbee:
+    def test_list_9_seeded_devices(self, s):
+        r = s.get(f"{API}/zigbee/devices", timeout=10)
+        assert r.status_code == 200, r.text
+        devs = r.json()["devices"]
+        assert len(devs) == 9, f"expected 9 seeded, got {len(devs)}"
+        relays = [d for d in devs if d["device_type"] == "relay"]
+        sensors = [d for d in devs if d["device_type"] == "sensor"]
+        assert len(relays) == 4
+        assert len(sensors) == 5
+        # every device has an assigned_role predefined (not empty/None)
+        for d in devs:
+            assert d.get("assigned_role"), f"missing assigned_role: {d}"
+
+    def test_update_assigned_role(self, s):
+        r0 = s.get(f"{API}/zigbee/devices", timeout=10)
+        dev = r0.json()["devices"][0]
+        did = dev["id"]
+        original_role = dev["assigned_role"]
+        # change role
+        r = s.put(f"{API}/zigbee/devices/{did}",
+                  json={"assigned_role": "lighting"}, timeout=10)
+        assert r.status_code == 200
+        assert r.json() == {"ok": True}
+        # verify persisted
+        r2 = s.get(f"{API}/zigbee/devices", timeout=10)
+        updated = next(d for d in r2.json()["devices"] if d["id"] == did)
+        assert updated["assigned_role"] == "lighting"
+        # restore
+        s.put(f"{API}/zigbee/devices/{did}",
+              json={"assigned_role": original_role}, timeout=10)
+
+    def test_update_friendly_name(self, s):
+        r0 = s.get(f"{API}/zigbee/devices", timeout=10)
+        dev = r0.json()["devices"][0]
+        did = dev["id"]
+        original_name = dev["friendly_name"]
+        r = s.put(f"{API}/zigbee/devices/{did}",
+                  json={"friendly_name": "TEST_new_name"}, timeout=10)
+        assert r.status_code == 200
+        r2 = s.get(f"{API}/zigbee/devices", timeout=10)
+        updated = next(d for d in r2.json()["devices"] if d["id"] == did)
+        assert updated["friendly_name"] == "TEST_new_name"
+        # restore
+        s.put(f"{API}/zigbee/devices/{did}",
+              json={"friendly_name": original_name}, timeout=10)
+
+    def test_update_nonexistent_returns_404(self, s):
+        r = s.put(f"{API}/zigbee/devices/does-not-exist",
+                  json={"assigned_role": "lighting"}, timeout=10)
+        assert r.status_code == 404
+
+    def test_rescan_returns_devices(self, s):
+        r = s.post(f"{API}/zigbee/devices/rescan", timeout=10)
+        assert r.status_code == 200
+        body = r.json()
+        assert body["ok"] is True
+        assert isinstance(body["devices"], list)
+        assert len(body["devices"]) == 9
+
+
+# --- Coupling logic (electrolyseur <-> filtration) ---
+class TestCoupling:
+    def _set_pump(self, s, state: bool):
+        return s.post(f"{API}/equipment/filtration/toggle",
+                      json={"state": state}, timeout=10)
+
+    def _set_elec(self, s, state: bool):
+        return s.post(f"{API}/equipment/electrolyseur/toggle",
+                      json={"state": state}, timeout=10)
+
+    def test_elec_cannot_start_without_pump(self, s):
+        # Ensure pump is OFF (this also stops electrolyseur silently)
+        self._set_pump(s, False)
+        r = self._set_elec(s, True)
+        assert r.status_code == 409, r.text
+        # Message should be in French and explicit
+        msg = r.json().get("detail", "")
+        assert "pompe" in msg.lower()
+        assert "électrolyseur" in msg.lower() or "electrolyseur" in msg.lower()
+        # restore state (pump ON so other tests are unaffected)
+        self._set_pump(s, True)
+
+    def test_elec_starts_when_pump_on(self, s):
+        # Pump ON
+        r0 = self._set_pump(s, True)
+        assert r0.status_code == 200
+        r = self._set_elec(s, True)
+        assert r.status_code == 200, r.text
+        assert r.json()["state"] is True
+        # cleanup: turn elec off to keep tests idempotent
+        self._set_elec(s, False)
+
+    def test_stopping_pump_also_stops_elec_and_creates_info_alert(self, s):
+        # Set state pump=ON, elec=ON
+        assert self._set_pump(s, True).status_code == 200
+        assert self._set_elec(s, True).status_code == 200
+        # Now stop the pump
+        r = self._set_pump(s, False)
+        assert r.status_code == 200
+        # Verify electrolyseur was cut
+        eq = s.get(f"{API}/equipment", timeout=10).json()["equipment"]
+        elec = next(e for e in eq if e["id"] == "electrolyseur")
+        assert elec["state"] is False, "electrolyseur should be stopped when pump stops"
+        # Verify an info alert with title 'Électrolyseur arrêté' exists
+        alerts = s.get(f"{API}/alerts?limit=20", timeout=10).json()["alerts"]
+        info_alert = next(
+            (a for a in alerts if a["level"] == "info"
+             and "Électrolyseur arrêté" in a["title"]),
+            None,
+        )
+        assert info_alert is not None, f"expected info alert; got {alerts[:3]}"
+        # restore pump ON
+        self._set_pump(s, True)

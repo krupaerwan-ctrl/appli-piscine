@@ -35,7 +35,11 @@ export const DashboardScreen: React.FC<Props> = ({ data, reload }) => {
   (data.sensors || []).forEach((r: any) => (sensors[r.metric] = r));
 
   async function toggleEquipment(id: string, next: boolean) {
-    await api.toggleEquipment(id, next);
+    try {
+      await api.toggleEquipment(id, next);
+    } catch (e: any) {
+      // Trigger a reload to re-sync UI state
+    }
     reload();
   }
 

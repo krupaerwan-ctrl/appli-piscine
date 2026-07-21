@@ -14,6 +14,7 @@ export const NAV_ITEMS: NavItem[] = [
   { key: "temperature", label: "Température", icon: "thermometer" },
   { key: "water", label: "Qualité de l'eau", icon: "flask" },
   { key: "equipment", label: "Équipements", icon: "settings" },
+  { key: "zigbee", label: "Appareils Zigbee", icon: "hardware-chip" },
   { key: "schedule", label: "Programmation", icon: "calendar" },
   { key: "history", label: "Historique", icon: "stats-chart" },
   { key: "alerts", label: "Alertes", icon: "notifications" },

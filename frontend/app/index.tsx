@@ -13,6 +13,7 @@ import { WidgetsScreen } from "../src/screens/WidgetsScreen";
 import { AlertsScreen } from "../src/screens/AlertsScreen";
 import { HistoryScreen } from "../src/screens/HistoryScreen";
 import { SettingsScreen } from "../src/screens/SettingsScreen";
+import { ZigbeeScreen } from "../src/screens/ZigbeeScreen";
 import {
   TempWaveCard, MetricCard, HistoryChartCard, EquipmentCard, PressureCard,
 } from "../src/components/Widgets";
@@ -31,16 +32,14 @@ if (Platform.OS === "web" && typeof document !== "undefined") {
         user-select: none !important;
         -webkit-tap-highlight-color: transparent !important;
         -webkit-touch-callout: none !important;
-        touch-action: manipulation;
-        overscroll-behavior: contain;
       }
       input, textarea {
         cursor: text !important;
         -webkit-user-select: text !important;
         user-select: text !important;
       }
-      /* Smooth touch scroll on webkit */
-      div[style*="overflow"] { -webkit-overflow-scrolling: touch !important; }
+      /* Smooth touch scroll everywhere it makes sense */
+      html, body { -webkit-overflow-scrolling: touch !important; overscroll-behavior: contain; }
       /* Kill focus outlines that flash on touch */
       *:focus { outline: none !important; }
       /* Hide native scrollbars in kiosk mode */
@@ -61,6 +60,7 @@ function headerTitle(key: string): string {
     case "alerts": return "Alertes";
     case "widgets": return "Widgets";
     case "settings": return "Paramètres";
+    case "zigbee": return "Appareils Zigbee";
     default: return "Tableau de bord";
   }
 }
@@ -205,6 +205,8 @@ export default function Index() {
         return <WidgetsScreen widgets={data.widgets || []} onChange={handleWidgetsChange} />;
       case "settings":
         return <SettingsScreen settings={data.settings} onSaved={handleSettingsSaved} />;
+      case "zigbee":
+        return <ZigbeeScreen />;
     }
     return null;
   };
