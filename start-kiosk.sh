@@ -45,5 +45,7 @@ exec "$CHROMIUM" \
     --disable-logging \
     --log-level=3 \
     --silent-debugger-extension-api \
+    --touch-events=enabled \
+    --enable-features=OverlayScrollbar \
     --incognito \
     http://127.0.0.1:3000 2>/dev/null

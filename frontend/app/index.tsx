@@ -39,8 +39,19 @@ if (Platform.OS === "web" && typeof document !== "undefined") {
         -webkit-user-select: text !important;
         user-select: text !important;
       }
-      /* Smooth touch scroll everywhere it makes sense */
-      html, body { -webkit-overflow-scrolling: touch !important; overscroll-behavior: contain; }
+      /* Enable smooth touch scroll everywhere (Raspberry Pi Chromium/Wayland) */
+      html, body {
+        -webkit-overflow-scrolling: touch !important;
+        overscroll-behavior: contain;
+        touch-action: pan-y !important;
+      }
+      /* React Native Web ScrollView renders as a div with inline overflow.
+         Force touch-action to allow both axes so drag-to-scroll always works. */
+      div[style*="overflow-y"], div[style*="overflow: auto"],
+      div[style*="overflow: scroll"], div[style*="overflow: hidden scroll"] {
+        touch-action: pan-x pan-y !important;
+        -webkit-overflow-scrolling: touch !important;
+      }
       /* Kill focus outlines that flash on touch */
       *:focus { outline: none !important; }
       /* Hide native scrollbars in kiosk mode */
