@@ -909,6 +909,107 @@ async def update_usb():
     return {"ok": True, "state": "running"}
 
 
+# --------------------------------------------------------------
+# WiFi status (Raspberry Pi)
+# --------------------------------------------------------------
+def _read_wifi_status() -> dict:
+    """Read WiFi connection status and signal quality on the Raspberry Pi.
+    Returns dict {available, connected, ssid, signal_percent, signal_dbm, ip, iface}.
+    Falls back gracefully when running in a non-Pi environment.
+    """
+    result = {
+        "available": False,
+        "connected": False,
+        "ssid": None,
+        "signal_percent": None,
+        "signal_dbm": None,
+        "ip": None,
+        "iface": None,
+    }
+    # 1) Try /proc/net/wireless (lightweight, works on Pi)
+    try:
+        wireless_path = "/proc/net/wireless"
+        if os.path.exists(wireless_path):
+            with open(wireless_path, "r") as f:
+                lines = f.readlines()
+            # Skip 2 header lines; parse first interface line if present
+            for line in lines[2:]:
+                parts = line.strip().split()
+                if len(parts) >= 4:
+                    iface = parts[0].rstrip(":")
+                    # link quality (parts[2]) and signal level in dBm (parts[3])
+                    try:
+                        link_quality = float(parts[2].rstrip("."))
+                        signal_dbm = float(parts[3].rstrip("."))
+                    except ValueError:
+                        continue
+                    result["available"] = True
+                    result["iface"] = iface
+                    # link_quality is /70 typically → convert to percentage
+                    percent = max(0, min(100, int(round(link_quality / 70.0 * 100))))
+                    result["signal_percent"] = percent
+                    result["signal_dbm"] = int(signal_dbm)
+                    result["connected"] = percent > 0
+                    break
+    except Exception as e:
+        logger.debug("wifi /proc/net/wireless read failed: %s", e)
+
+    # 2) Try iwgetid for SSID
+    if result["connected"]:
+        try:
+            out = subprocess.run(
+                ["iwgetid", "-r"], capture_output=True, text=True, timeout=2
+            )
+            ssid = (out.stdout or "").strip()
+            if ssid:
+                result["ssid"] = ssid
+        except Exception as e:
+            logger.debug("iwgetid failed: %s", e)
+
+        # 3) Get IP of the wireless interface
+        try:
+            iface = result.get("iface") or "wlan0"
+            out = subprocess.run(
+                ["ip", "-4", "addr", "show", iface],
+                capture_output=True, text=True, timeout=2,
+            )
+            import re as _re
+            m = _re.search(r"inet\s+(\d+\.\d+\.\d+\.\d+)", out.stdout or "")
+            if m:
+                result["ip"] = m.group(1)
+        except Exception as e:
+            logger.debug("ip addr failed: %s", e)
+
+    # 4) Fallback: if /proc/net/wireless is missing but nmcli is present
+    if not result["available"]:
+        try:
+            out = subprocess.run(
+                ["nmcli", "-t", "-f", "ACTIVE,SSID,SIGNAL,DEVICE", "device", "wifi"],
+                capture_output=True, text=True, timeout=2,
+            )
+            for line in (out.stdout or "").splitlines():
+                fields = line.split(":")
+                if len(fields) >= 4 and fields[0] == "yes":
+                    result["available"] = True
+                    result["connected"] = True
+                    result["ssid"] = fields[1] or None
+                    try:
+                        result["signal_percent"] = int(fields[2])
+                    except ValueError:
+                        pass
+                    result["iface"] = fields[3] or None
+                    break
+        except Exception as e:
+            logger.debug("nmcli fallback failed: %s", e)
+
+    return result
+
+
+@api_router.get("/system/wifi")
+async def system_wifi():
+    return _read_wifi_status()
+
+
 @api_router.post("/system/exit-kiosk")
 async def exit_kiosk():
     try:

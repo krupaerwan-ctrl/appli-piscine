@@ -33,6 +33,7 @@ export const api = {
   updateWidgets: (widgets: any[]) =>
     req("/widgets", { method: "PUT", body: JSON.stringify(widgets) }),
   system: () => req("/system/status"),
+  wifi: () => req("/system/wifi"),
 };
 
 export type Sensor = { metric: string; value: number; unit: string };
