@@ -1,0 +1,36 @@
+{
+  "summary": "Iteration 10 - Maintenance reminders CRUD + enriched Journal events. ALL scenarios PASS. Backend: 15/15 pytest tests pass (test_maintenance_and_journal.py). Verified: (a) GET /api/maintenance returns the 3 default tasks (filter_cleaning, backwash, chlorine_check) with days_remaining/is_overdue/next_due_at correctly computed; (b) POST /api/maintenance creates a task (is_overdue=true when never done — verified); (c) PUT /api/maintenance/{id} updates name/interval/icon/enabled; (d) POST /api/maintenance/{id}/done resets timer → is_overdue=false and days_remaining≈interval_days (checked 20.5<=v<=21.1 for interval=21); (e) DELETE removes the task; (f) 404 for update/done on missing id and 400 for create without name; (g) /api/dashboard/summary now includes `maintenance` array with all enriched fields; (h) /api/equipment/events returns `water_temp` (float) and `duration_seconds` (int for OFF events, null for ON events); (i) Water_temp is captured on ALL new events (triggered filtration ON→OFF, both events had water_temp 26.1-26.2°C); (j) duration_seconds correctly computed for OFF events (matches ~2s cycle); (k) equipment_id filter works. Frontend (Kiosk 1280x800): widget-maintenance visible on dashboard with maintenance-done-<id> buttons; nav-maintenance opens MaintenanceScreen; CRUD flows all work (maintenance-add → maint-input-name/interval/icon-water → maint-save creates row; maint-done-filter_cleaning, maint-toggle-backwash, maint-edit-<uid>, maint-del-<uid> confirmed working, user-created task edited and deleted successfully as cleanup); nav-journal opens JournalScreen; all 5 filter chips present (all/filtration/electrolyseur/heat_pump/lighting); filtration filter narrows to 30 rows all with equipment_id=filtration; row content confirmed to include equipment label (Pompe filtration), action (démarrage/arrêt), timestamp (22 juil., 22:41), source label (Manuel), DURÉE 2s for OFF events, EAU 26.2°C water_temp. Pre-existing shadow*/pointerEvents deprecation warnings remain (non-blocking, iter 5-9). No regressions on WiFi indicator / pump control / auto-schedule from previous iteration.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": [
+      {"component": "shadow* style props", "issue": "(Pre-existing iter 5-9) RN-Web warning 'shadow* style props are deprecated. Use boxShadow'. Non-blocking. Reference: /app/frontend/src/components/Widgets.tsx card styles."},
+      {"component": "props.pointerEvents", "issue": "(Pre-existing iter 5-9) RN-Web warning 'props.pointerEvents is deprecated. Use style.pointerEvents' from third-party gesture-handler/reanimated. Non-blocking."}
+    ]
+  },
+  "test_report_links": [
+    "/app/test_reports/iteration_10.json",
+    "/app/test_reports/pytest/iteration_10.xml",
+    "/app/backend/tests/test_maintenance_and_journal.py"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py _list_maintenance (line ~913) correctly computes next_due_at = last_done_at + interval_days, and for never-done tasks defaults next_due=now so is_overdue=true from the start. Matches UX expectation.",
+    "server.py log_equipment_event (line ~339) captures water_temp from in-memory sensor_state each time — verified via new toggle. Note: if sensor_state['temp'] is 0.0, water_temp is stored as 0.0 (falsy fallback in code); currently temp is bounded [18..32] so not an issue, but the `or 0.0` fallback could mask a genuine 0°C reading. Minor.",
+    "server.py equipment_events endpoint (line ~856) fetches events with LIMIT then does an extra SELECT per OFF event to compute duration. O(N) queries, fine for limit=100 but could be batched with a window function if the limit grows.",
+    "server.py MaintenancePayload.icon defaults to 'construct' when omitted (line ~959) — good default. But there is NO validation that icon is one of the allowed set (Ionicons). Front-end restricts to 6 choices via maint-icon-* pickers, but the API accepts any string. Non-blocking, current UX is fine.",
+    "MaintenanceScreen.tsx line 46: `useState('30')` default interval and parseInt in save() with iv<=0 guard — good. The Alert.confirm() web branch uses window.confirm which is auto-accepted in tests (verified).",
+    "JournalScreen.tsx line 78 sets an auto-refresh interval of 15s — good for keeping the widget fresh; useEffect cleanup properly clears the timer.",
+    "server.py init_db (line ~223) migration: `ALTER TABLE equipment_events ADD COLUMN water_temp REAL` is idempotent via a PRAGMA table_info check. Safe to run repeatedly."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_maintenance_and_journal.py (new)"
+  ],
+  "success_rate": {"backend": "100% (15/15)", "frontend": "100% (9/9 flows: dashboard widget-maintenance, done buttons, nav-maintenance, create task, mark-done, toggle-enabled, edit+delete cleanup, nav-journal, filter chips + enriched row content)"},
+  "seed_data_creation": "Backend tests create/delete an ephemeral TEST_ph_calibration task, prefix TEST_. All test data cleaned up. UI test also created + deleted a UI_TEST_task_delete_me row.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "New endpoints: GET/POST/PUT/DELETE /api/maintenance[/id], POST /api/maintenance/{id}/done. Dashboard summary now has `maintenance` array. equipment_events row shape now includes {water_temp:float|null, duration_seconds:int|null}. Old (pre-migration) events have water_temp=null — do NOT treat as bug. New JournalScreen uses testIDs journal-screen, journal-refresh, journal-filter-<all|filtration|electrolyseur|heat_pump|lighting>, journal-row-<id>. New MaintenanceScreen uses testIDs maintenance-screen, maintenance-add, maint-input-name/interval, maint-icon-<key>, maint-save/cancel, maint-row-<id>, maint-done-<id>, maint-edit-<id>, maint-toggle-<id>, maint-del-<id>. Dashboard widget testID is widget-maintenance with maintenance-done-<id> per row. Sidebar nav-maintenance and nav-journal. delete flows use window.confirm on web — auto-accept via page.on('dialog', d=>d.accept())."
+}

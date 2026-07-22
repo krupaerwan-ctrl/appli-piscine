@@ -14,6 +14,8 @@ export const NAV_ITEMS: NavItem[] = [
   { key: "equipment", label: "Équipements", icon: "settings" },
   { key: "zigbee", label: "Appareils Zigbee", icon: "hardware-chip" },
   { key: "schedule", label: "Programmation", icon: "calendar" },
+  { key: "maintenance", label: "Maintenance", icon: "construct" },
+  { key: "journal", label: "Journal", icon: "list" },
   { key: "history", label: "Historique", icon: "stats-chart" },
   { key: "alerts", label: "Alertes", icon: "notifications" },
   { key: "widgets", label: "Widgets", icon: "grid" },

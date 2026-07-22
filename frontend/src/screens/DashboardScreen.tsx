@@ -4,10 +4,11 @@ import { COLORS, SPACING } from "../lib/theme";
 import {
   TempWaveCard, MetricCard, HistoryChartCard, PressureCard,
   EquipmentCard, ScheduleCard, SystemStateCard, AlertsCard, PumpControlCard,
+  MaintenanceCard,
 } from "../components/Widgets";
 import { api } from "../lib/api";
 
-type Props = { data: any; reload: () => void };
+type Props = { data: any; reload: () => void; onNavigate?: (key: string) => void };
 
 // Preferred min-widths per widget so the flex-wrap grid still looks clean
 const W: Record<string, number> = {
@@ -15,9 +16,10 @@ const W: Record<string, number> = {
   temp: 220, ph: 220, orp: 220, salinity: 220,
   history: 480, pressure: 240,
   equipment: 280, schedule: 280, system: 280, alerts: 280,
+  maintenance: 380,
 };
 
-export const DashboardScreen: React.FC<Props> = ({ data, reload, onToggleEquipment }) => {
+export const DashboardScreen: React.FC<Props> = ({ data, reload, onToggleEquipment, onNavigate }) => {
   const [history, setHistory] = useState<any[]>([]);
   const [histRange, setHistRange] = useState<"24h" | "7j">("24h");
   useEffect(() => {
@@ -131,6 +133,17 @@ export const DashboardScreen: React.FC<Props> = ({ data, reload, onToggleEquipme
         );
       case "alerts":
         return <AlertsCard alerts={data.latest_alerts || []} />;
+      case "maintenance":
+        return (
+          <MaintenanceCard
+            tasks={data.maintenance || []}
+            onDone={async (id) => {
+              try { await api.markMaintenanceDone(id); } catch {}
+              reload();
+            }}
+            onManage={() => onNavigate?.("maintenance")}
+          />
+        );
     }
     return null;
   };

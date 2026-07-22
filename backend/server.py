@@ -76,8 +76,18 @@ DEFAULT_WIDGETS = [
     {"id": "pressure", "name": "Pression / Niveau", "enabled": 1, "order_num": 6},
     {"id": "equipment", "name": "Équipements", "enabled": 1, "order_num": 7},
     {"id": "schedule", "name": "Programmation filtration", "enabled": 1, "order_num": 8},
-    {"id": "system", "name": "État système", "enabled": 1, "order_num": 9},
-    {"id": "alerts", "name": "Alertes", "enabled": 1, "order_num": 10},
+    {"id": "maintenance", "name": "Rappels de maintenance", "enabled": 1, "order_num": 9},
+    {"id": "system", "name": "État système", "enabled": 1, "order_num": 10},
+    {"id": "alerts", "name": "Alertes", "enabled": 1, "order_num": 11},
+]
+
+DEFAULT_MAINTENANCE_TASKS = [
+    {"id": "filter_cleaning", "name": "Nettoyage du filtre",
+     "icon": "sparkles-outline", "interval_days": 30},
+    {"id": "backwash", "name": "Contre-lavage (backwash)",
+     "icon": "sync", "interval_days": 7},
+    {"id": "chlorine_check", "name": "Vérification du chlore",
+     "icon": "flask", "interval_days": 3},
 ]
 
 # A few demo Zigbee devices so the "Appareils Zigbee" screen is populated
@@ -200,8 +210,24 @@ async def init_db():
             reason TEXT, ts TEXT NOT NULL
         );
         CREATE INDEX IF NOT EXISTS idx_equip_events_ts ON equipment_events(ts);
+
+        CREATE TABLE IF NOT EXISTS maintenance_tasks (
+            id TEXT PRIMARY KEY, name TEXT NOT NULL, icon TEXT NOT NULL,
+            interval_days INTEGER NOT NULL DEFAULT 30,
+            last_done_at TEXT, enabled INTEGER NOT NULL DEFAULT 1
+        );
         """)
         await db.commit()
+
+        # Column migration: add water_temp to equipment_events on existing DBs
+        cur = await db.execute("PRAGMA table_info(equipment_events)")
+        cols = {row[1] async for row in cur}
+        if "water_temp" not in cols:
+            try:
+                await db.execute("ALTER TABLE equipment_events ADD COLUMN water_temp REAL")
+                await db.commit()
+            except Exception as e:
+                logger.warning("add water_temp column failed: %s", e)
 
         # Seed defaults if empty
         cur = await db.execute("SELECT COUNT(*) FROM settings")
@@ -247,6 +273,13 @@ async def init_db():
                 docs.append((str(uuid.uuid4()), "temp", round(v, 2), "°C", _iso(t)))
             await db.executemany(
                 "INSERT INTO readings(id,metric,value,unit,ts) VALUES(?,?,?,?,?)", docs
+            )
+        # Seed default maintenance tasks (idempotent)
+        for t in DEFAULT_MAINTENANCE_TASKS:
+            await db.execute(
+                "INSERT OR IGNORE INTO maintenance_tasks(id,name,icon,interval_days,last_done_at,enabled) "
+                "VALUES(?,?,?,?,NULL,1)",
+                (t["id"], t["name"], t["icon"], t["interval_days"]),
             )
         # Seed demo Zigbee devices
         cur = await db.execute("SELECT COUNT(*) FROM zigbee_devices")
@@ -304,12 +337,18 @@ async def create_alert(level: str, title: str, message: str):
 
 
 async def log_equipment_event(equipment_id: str, action: str, source: str, reason: Optional[str] = None):
-    """Log every ON/OFF change to the equipment_events journal."""
+    """Log every ON/OFF change to the equipment_events journal, capturing the
+    current water temperature at that moment for later analysis."""
+    try:
+        water_temp = float(sensor_state.get("temp", {}).get("value") or 0.0)
+    except Exception:
+        water_temp = None
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute(
-            "INSERT INTO equipment_events(id,equipment_id,action,source,reason,ts) VALUES(?,?,?,?,?,?)",
+            "INSERT INTO equipment_events(id,equipment_id,action,source,reason,ts,water_temp) "
+            "VALUES(?,?,?,?,?,?,?)",
             (str(uuid.uuid4()), equipment_id, action, source, reason,
-             _iso(datetime.now(timezone.utc))),
+             _iso(datetime.now(timezone.utc)), water_temp),
         )
         await db.commit()
 
@@ -816,19 +855,159 @@ async def toggle_equipment(eid: str, payload: EquipmentToggle):
 
 @api_router.get("/equipment/events")
 async def equipment_events(limit: int = 100, equipment_id: Optional[str] = None):
-    items = []
-    q = "SELECT id, equipment_id, action, source, reason, ts FROM equipment_events"
+    """List equipment ON/OFF events, most recent first.
+    Each event is enriched with:
+      • water_temp: the pool temperature captured at the moment of the event
+      • duration_seconds: for OFF events, the duration of the preceding ON cycle
+        (i.e. how long the equipment ran before it was stopped)."""
+    q = "SELECT id, equipment_id, action, source, reason, ts, water_temp FROM equipment_events"
     params: list = []
     if equipment_id:
         q += " WHERE equipment_id = ?"
         params.append(equipment_id)
     q += " ORDER BY ts DESC LIMIT ?"
     params.append(limit)
+
+    events: list = []
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
         async for row in await db.execute(q, params):
-            items.append(dict(row))
-    return {"events": items}
+            events.append(dict(row))
+
+        # For each OFF event, look up the most recent ON of the same equipment
+        # BEFORE that event to compute cycle duration.
+        for ev in events:
+            if ev["action"] == "off":
+                cur = await db.execute(
+                    "SELECT ts FROM equipment_events "
+                    "WHERE equipment_id=? AND action='on' AND ts < ? "
+                    "ORDER BY ts DESC LIMIT 1",
+                    (ev["equipment_id"], ev["ts"]),
+                )
+                r = await cur.fetchone()
+                if r and r["ts"]:
+                    try:
+                        t_on = datetime.fromisoformat(r["ts"].replace("Z", "+00:00"))
+                        t_off = datetime.fromisoformat(ev["ts"].replace("Z", "+00:00"))
+                        ev["duration_seconds"] = int(max(0, (t_off - t_on).total_seconds()))
+                    except Exception:
+                        ev["duration_seconds"] = None
+                else:
+                    ev["duration_seconds"] = None
+            else:
+                ev["duration_seconds"] = None
+    return {"events": events}
+
+
+# ==============================================================
+# MAINTENANCE TASKS
+# ==============================================================
+class MaintenancePayload(BaseModel):
+    id: Optional[str] = None
+    name: Optional[str] = None
+    icon: Optional[str] = None
+    interval_days: Optional[int] = None
+    enabled: Optional[bool] = None
+
+
+async def _list_maintenance() -> List[Dict[str, Any]]:
+    items: List[Dict[str, Any]] = []
+    now = datetime.now(timezone.utc)
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async for row in await db.execute(
+            "SELECT id, name, icon, interval_days, last_done_at, enabled "
+            "FROM maintenance_tasks ORDER BY name ASC"
+        ):
+            d = dict(row)
+            d["enabled"] = bool(d["enabled"])
+            interval = int(d.get("interval_days") or 0)
+            last_iso = d.get("last_done_at")
+            if last_iso:
+                try:
+                    last_dt = datetime.fromisoformat(last_iso.replace("Z", "+00:00"))
+                    next_due = last_dt + timedelta(days=interval)
+                except Exception:
+                    last_dt = None
+                    next_due = now
+            else:
+                # Never done → due immediately (or based on interval from "now").
+                last_dt = None
+                next_due = now
+            d["next_due_at"] = _iso(next_due)
+            remaining = (next_due - now).total_seconds()
+            d["days_remaining"] = round(remaining / 86400.0, 1)
+            d["is_overdue"] = remaining <= 0
+            items.append(d)
+    return items
+
+
+@api_router.get("/maintenance")
+async def get_maintenance():
+    return {"tasks": await _list_maintenance()}
+
+
+@api_router.post("/maintenance")
+async def create_maintenance(payload: MaintenancePayload):
+    if not payload.name:
+        raise HTTPException(400, "Le nom est obligatoire.")
+    tid = payload.id or str(uuid.uuid4())
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            "INSERT INTO maintenance_tasks(id,name,icon,interval_days,last_done_at,enabled) "
+            "VALUES(?,?,?,?,NULL,?)",
+            (tid, payload.name, payload.icon or "construct", int(payload.interval_days or 30),
+             1 if (payload.enabled is None or payload.enabled) else 0),
+        )
+        await db.commit()
+    return {"id": tid, "ok": True}
+
+
+@api_router.put("/maintenance/{tid}")
+async def update_maintenance(tid: str, payload: MaintenancePayload):
+    updates: List[str] = []
+    values: List[Any] = []
+    if payload.name is not None:
+        updates.append("name=?"); values.append(payload.name)
+    if payload.icon is not None:
+        updates.append("icon=?"); values.append(payload.icon)
+    if payload.interval_days is not None:
+        updates.append("interval_days=?"); values.append(int(payload.interval_days))
+    if payload.enabled is not None:
+        updates.append("enabled=?"); values.append(1 if payload.enabled else 0)
+    if not updates:
+        raise HTTPException(400, "Aucun champ à mettre à jour.")
+    values.append(tid)
+    async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute(
+            f"UPDATE maintenance_tasks SET {', '.join(updates)} WHERE id=?", values
+        )
+        await db.commit()
+        if cur.rowcount == 0:
+            raise HTTPException(404, "Tâche introuvable.")
+    return {"ok": True}
+
+
+@api_router.delete("/maintenance/{tid}")
+async def delete_maintenance(tid: str):
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("DELETE FROM maintenance_tasks WHERE id=?", (tid,))
+        await db.commit()
+    return {"ok": True}
+
+
+@api_router.post("/maintenance/{tid}/done")
+async def mark_maintenance_done(tid: str):
+    """Reset the timer of a task: sets last_done_at = now."""
+    now_iso = _iso(datetime.now(timezone.utc))
+    async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute(
+            "UPDATE maintenance_tasks SET last_done_at=? WHERE id=?", (now_iso, tid)
+        )
+        await db.commit()
+        if cur.rowcount == 0:
+            raise HTTPException(404, "Tâche introuvable.")
+    return {"ok": True, "last_done_at": now_iso}
 
 
 async def _pump_runtime_payload() -> Dict[str, Any]:
@@ -1051,6 +1230,7 @@ async def dashboard_summary():
     schedules = await _schedules_list()
     widgets = await _widgets_list()
     pump_info = await _pump_runtime_payload()
+    maintenance = await _list_maintenance()
     latest_alerts = []
     unresolved = 0
     async with aiosqlite.connect(DB_PATH) as db:
@@ -1076,6 +1256,7 @@ async def dashboard_summary():
         },
         "recommended_filtration_hours": round(compute_filtration_hours(sensor_state["temp"]["value"]), 1),
         "pump": pump_info,
+        "maintenance": maintenance,
     }
 
 

@@ -37,6 +37,20 @@ export const api = {
   pumpRuntime: () => req("/equipment/pump/runtime"),
   clearPumpOverride: () => req("/equipment/pump/clear-override", { method: "POST" }),
   autoApplySchedule: () => req("/schedule/auto-apply", { method: "POST" }),
+  events: (limit = 30, equipment_id?: string) => {
+    const q = new URLSearchParams({ limit: String(limit) });
+    if (equipment_id) q.append("equipment_id", equipment_id);
+    return req(`/equipment/events?${q.toString()}`);
+  },
+  maintenance: () => req("/maintenance"),
+  createMaintenance: (t: any) =>
+    req("/maintenance", { method: "POST", body: JSON.stringify(t) }),
+  updateMaintenance: (id: string, t: any) =>
+    req(`/maintenance/${id}`, { method: "PUT", body: JSON.stringify(t) }),
+  deleteMaintenance: (id: string) =>
+    req(`/maintenance/${id}`, { method: "DELETE" }),
+  markMaintenanceDone: (id: string) =>
+    req(`/maintenance/${id}/done`, { method: "POST" }),
 };
 
 export type Sensor = { metric: string; value: number; unit: string };

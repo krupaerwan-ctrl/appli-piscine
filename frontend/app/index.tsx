@@ -15,6 +15,8 @@ import { HistoryScreen } from "../src/screens/HistoryScreen";
 import { SettingsScreen } from "../src/screens/SettingsScreen";
 import { ZigbeeScreen } from "../src/screens/ZigbeeScreen";
 import { EquipmentPage } from "../src/screens/EquipmentPage";
+import { MaintenanceScreen } from "../src/screens/MaintenanceScreen";
+import { JournalScreen } from "../src/screens/JournalScreen";
 import { TouchScrollbar } from "../src/components/TouchScrollbar";
 import {
   TempWaveCard, MetricCard, HistoryChartCard, EquipmentCard, PressureCard,
@@ -67,6 +69,8 @@ function headerTitle(key: string): string {
     case "home": return "Tableau de bord";
     case "equipment": return "Équipements";
     case "schedule": return "Programmation";
+    case "maintenance": return "Maintenance";
+    case "journal": return "Journal d'événements";
     case "history": return "Historique";
     case "alerts": return "Alertes";
     case "widgets": return "Widgets";
@@ -171,9 +175,13 @@ export default function Index() {
     }
     switch (active) {
       case "home":
-        return <DashboardScreen data={data} reload={reload} onToggleEquipment={handleToggleEquipment} />;
+        return <DashboardScreen data={data} reload={reload} onToggleEquipment={handleToggleEquipment} onNavigate={setActive} />;
       case "equipment":
         return <EquipmentPage data={data} reload={reload} onToggleEquipment={handleToggleEquipment} />;
+      case "maintenance":
+        return <MaintenanceScreen />;
+      case "journal":
+        return <JournalScreen />;
       case "schedule":
         return (
           <ScheduleScreen

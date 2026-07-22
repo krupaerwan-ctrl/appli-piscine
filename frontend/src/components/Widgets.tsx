@@ -461,6 +461,129 @@ export const AlertsCard: React.FC<AlertProps> = ({ alerts }) => (
   </Card>
 );
 
+// -------- Maintenance widget --------
+type MaintenanceTask = {
+  id: string;
+  name: string;
+  icon: string;
+  interval_days: number;
+  last_done_at: string | null;
+  enabled: boolean;
+  days_remaining: number;
+  is_overdue: boolean;
+};
+type MaintProps = {
+  tasks: MaintenanceTask[];
+  onDone: (id: string) => void;
+  onManage?: () => void;
+};
+export const MaintenanceCard: React.FC<MaintProps> = ({ tasks, onDone, onManage }) => {
+  const active = tasks.filter((t) => t.enabled);
+  const overdue = active.filter((t) => t.is_overdue).length;
+  const iconMap: Record<string, keyof typeof Ionicons.glyphMap> = {
+    "sparkles-outline": "sparkles-outline",
+    sync: "sync",
+    flask: "flask",
+    construct: "construct",
+    hammer: "hammer",
+    water: "water",
+  };
+  return (
+    <Card testID="widget-maintenance" style={{ flex: 1, minWidth: 300 }}>
+      <View style={styles.metricHead}>
+        <Ionicons
+          name={overdue > 0 ? "warning" : "checkmark-circle"}
+          size={18}
+          color={overdue > 0 ? COLORS.error : COLORS.success}
+        />
+        <Text style={styles.metricLabel}>Rappels de maintenance</Text>
+        {overdue > 0 && (
+          <View style={maintS.overdueBadge} testID="maintenance-overdue-badge">
+            <Text style={maintS.overdueText}>{overdue} en retard</Text>
+          </View>
+        )}
+        {onManage && (
+          <Pressable
+            onPress={onManage}
+            style={{ marginLeft: overdue > 0 ? 8 : "auto", padding: 4 }}
+            testID="maintenance-manage"
+            hitSlop={8}
+          >
+            <Ionicons name="pencil" size={16} color={COLORS.textMuted} />
+          </Pressable>
+        )}
+      </View>
+      {active.length === 0 ? (
+        <Text style={{ color: COLORS.textMuted, fontSize: FS.sm, paddingVertical: SPACING.sm }}>
+          Aucune tâche configurée.
+        </Text>
+      ) : (
+        active.map((t) => {
+          const late = t.is_overdue;
+          const daysAbs = Math.abs(t.days_remaining);
+          const statusText = late
+            ? daysAbs < 1
+              ? "À faire maintenant"
+              : `En retard de ${daysAbs.toFixed(0)} j`
+            : daysAbs < 1
+              ? "Bientôt (< 24h)"
+              : `Dans ${daysAbs.toFixed(0)} j`;
+          return (
+            <View key={t.id} style={maintS.row} testID={`maintenance-row-${t.id}`}>
+              <Ionicons
+                name={iconMap[t.icon] || "construct"}
+                size={22}
+                color={late ? COLORS.error : COLORS.textSecondary}
+              />
+              <View style={{ flex: 1, marginLeft: SPACING.sm }}>
+                <Text style={{ color: COLORS.text, fontSize: FS.base, fontWeight: "600" }}>
+                  {t.name}
+                </Text>
+                <Text
+                  style={{
+                    color: late ? COLORS.error : COLORS.textMuted,
+                    fontSize: FS.sm, fontWeight: late ? "600" : "400",
+                  }}
+                >
+                  {statusText}   ·   tous les {t.interval_days} j
+                </Text>
+              </View>
+              <Pressable
+                onPress={() => onDone(t.id)}
+                style={[maintS.doneBtn, late && { backgroundColor: COLORS.success }]}
+                testID={`maintenance-done-${t.id}`}
+              >
+                <Ionicons name="checkmark" size={16} color={late ? "#fff" : COLORS.success} />
+                <Text style={[maintS.doneText, late && { color: "#fff" }]}>Fait</Text>
+              </Pressable>
+            </View>
+          );
+        })
+      )}
+    </Card>
+  );
+};
+
+const maintS = StyleSheet.create({
+  overdueBadge: {
+    backgroundColor: COLORS.error, borderRadius: 999,
+    paddingHorizontal: 10, paddingVertical: 3, marginLeft: "auto",
+  },
+  overdueText: { color: "#fff", fontSize: FS.sm, fontWeight: "700" },
+  row: {
+    flexDirection: "row", alignItems: "center",
+    paddingVertical: SPACING.sm,
+    borderBottomWidth: 1, borderBottomColor: COLORS.border,
+  },
+  doneBtn: {
+    flexDirection: "row", alignItems: "center", gap: 4,
+    paddingHorizontal: 12, paddingVertical: 8, borderRadius: 999,
+    borderWidth: 1, borderColor: COLORS.success,
+    backgroundColor: COLORS.surfaceTertiary,
+  },
+  doneText: { color: COLORS.success, fontSize: FS.sm, fontWeight: "700" },
+});
+
 const styles = StyleSheet.create({
   card: {
     backgroundColor: COLORS.surfaceSecondary,
