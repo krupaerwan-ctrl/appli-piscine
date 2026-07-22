@@ -178,13 +178,13 @@ export default function Index() {
         return (
           <ScheduleScreen
             schedules={data.schedules}
-            totalHours={data.schedules.reduce((acc: number, s: any) => {
+            totalHours={Math.round(data.schedules.reduce((acc: number, s: any) => {
               if (!s.enabled) return acc;
               const [sh, sm] = s.start.split(":").map(Number);
               const [eh, em] = s.end.split(":").map(Number);
               const a = sh + sm / 60; const b = eh + em / 60;
               return acc + (b > a ? b - a : 24 - a + b);
-            }, 0)}
+            }, 0) * 10) / 10}
             recommended={data.recommended_filtration_hours}
             waterTemp={sensors.temp?.value ?? 0}
             reload={reload}

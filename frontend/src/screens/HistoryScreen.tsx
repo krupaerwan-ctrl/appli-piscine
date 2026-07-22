@@ -24,11 +24,24 @@ export const HistoryScreen: React.FC = () => {
 
   useEffect(() => {
     api.history(metric, hours).then((r) => {
-      const data = r.points.map((p: any) => ({
-        value: p.value,
-        label: new Date(p.ts).getHours() + "h",
+      const isMulti = hours > 24;
+      const data = r.points.map((p: any) => {
+        const d = new Date(p.ts);
+        return {
+          value: p.value,
+          ts: p.ts,
+          label: isMulti
+            ? d.toLocaleDateString("fr-FR", { weekday: "short" }).replace(".", "")
+            : d.getHours() + "h",
+        };
+      });
+      // Only show a subset of labels to avoid clutter
+      const step = Math.max(1, Math.floor(data.length / (isMulti ? 7 : 6)));
+      const withLabels = data.map((p: any, i: number) => ({
+        ...p,
+        label: i % step === 0 ? p.label : "",
       }));
-      setPoints(data);
+      setPoints(withLabels);
     }).catch(() => setPoints([]));
   }, [metric, hours]);
 

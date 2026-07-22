@@ -1,0 +1,33 @@
+{
+  "summary": "Iteration 9 - Pump manual control + auto-apply schedule + 24h/7j history toggle. ALL scenarios PASS. Backend: 8/8 pytest tests pass (test_pump_features.py: dashboard.summary has pump{state,today_hours,week_hours,manual_override,auto_filtration,water_temp,recommended_hours}; /api/equipment/pump/runtime returns same shape; toggling /api/equipment/filtration/toggle sets manual_override=true; /api/equipment/pump/clear-override returns {ok:true} and clears the flag; /api/schedule/auto-apply returns {ok, hours, slots, water_temp}, applies temp/2 rule (bounded [4,24]), and replaces the schedules table). Frontend (Kiosk 1280x800): (A) Dashboard 'Contrôle pompe' widget (widget-pump) shows Démarrer/Arrêter button (pump-main-toggle) with today/week hour counters and 'Eau XX.X °C / Recommandé YY.Y h (T°/2)' hint. (B) Tapping pump-main-toggle triggered filtration ON, the 'Mode manuel' badge (pump-override-badge) appeared, and 'Revenir au planning automatique' (pump-clear-override) button appeared underneath. Clicking pump-clear-override cleared the badge. (C) HistoryChartCard shows 24h/7j pill toggles (history-range-24h/-7j); tapping 7j re-labels title to 'Historique température (7 jours)' and re-fetches /api/sensors/history?hours=168. (D) Programmation screen shows 'Appliquer maintenant' (apply-auto-schedule); clicking it re-computed schedules for water_temp=26.1°C → 13.1h split into 3 slots (05:49–10:11, 11:49–16:11, 17:49–22:11) and 'Total programmé' updated to 13.1h. (E) WiFi indicator (wifi-indicator) still visible in TopHeader after all navigation. Pre-existing RN-Web deprecation warnings (shadow*, props.pointerEvents) still present but non-blocking. Note: the scheduler background loop occasionally flips the pump state between polls, but this was worked around by clearing the manual override at the start of each test — see agent-to-agent note.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": [
+      {"component": "shadow* style props", "issue": "(Pre-existing iter 5-8) Console warning 'shadow* style props are deprecated. Use boxShadow' from RN-Web on toast/card. Non-blocking. Reference: /app/frontend/app/index.tsx toast style + /app/frontend/src/components/Widgets.tsx cards."},
+      {"component": "props.pointerEvents", "issue": "(Pre-existing iter 5-8) Console warning 'props.pointerEvents is deprecated. Use style.pointerEvents' from third-party gesture-handler/reanimated. Non-blocking."}
+    ]
+  },
+  "test_report_links": [
+    "/app/test_reports/iteration_9.json",
+    "/app/test_reports/pytest/iteration_9.xml",
+    "/app/backend/tests/test_pump_features.py"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py line 148 compute_filtration_hours(temp) clamps to max(4, min(24, temp/2)) — matches the requested 'temp/2 rule' spec. Verified against the API response.",
+    "server.py _apply_auto_schedule() (line 447) correctly wipes schedules table then INSERTs the new slots. Idempotent (last_date guard) for the daily loop; manual endpoint reruns unconditionally, which is the intended UX.",
+    "server.py line 797 auto-sets pump_manual_override=True on ANY manual filtration toggle. This is the correct semantics for Q2=a (override persists until user clicks 'Revenir au planning'). Verified end-to-end.",
+    "PumpControlCard's showOverrideBadge = manual_override && auto_filtration means: when auto_filtration is OFF, the badge/clear-button is hidden (there's nothing to 'return to'). Correct, and the alternative note 'Pilotage auto désactivé' is shown instead.",
+    "Frontend DashboardScreen line 74 wraps api.clearPumpOverride() in try/catch — good. But it doesn't surface backend errors to the user (silent catch). Minor UX gap only, not a bug.",
+    "server.py line 148: compute_filtration_hours doesn't clamp when temp is negative/NaN safely (max(4, min(24, ...)) will handle NaN by falling through as NaN). Since sensor_state.temp is always a bounded number [18..32], not an actual risk."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100% (8/8)", "frontend": "100% (8/8 flows: pump widget, wifi, history 24h, history 7j, pump toggle, override badge, clear-override, apply-auto)"},
+  "seed_data_creation": "None. Tests use existing simulated sensor data and the auto-seeded schedules table (which auto-apply then replaces).",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "New endpoints all live under /api/equipment/pump/* and /api/schedule/auto-apply. Sidebar navigation uses testID='nav-<key>' (NOT 'sidebar-<key>'). To test pump flows cleanly, always POST /api/equipment/pump/clear-override BEFORE the test since the background pump_scheduler_loop (30s tick) will otherwise flip the state. The Widgets.tsx PumpControlCard hides the override badge when auto_filtration=false — flip settings.auto_filtration=true to see it in tests. temp/2 slot distribution: ≤6h→1 slot, ≤12h→2 slots, >12h→3 slots (see server.py _distribute_hours_into_slots)."
+}

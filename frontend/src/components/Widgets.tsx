@@ -58,6 +58,137 @@ export const MetricCard: React.FC<MetricProps> = ({
   );
 };
 
+// -------- Pump manual control + runtime counter --------
+type PumpProps = {
+  state: boolean;
+  todayHours: number;
+  weekHours: number;
+  manualOverride: boolean;
+  autoFiltration: boolean;
+  waterTemp: number;
+  recommendedHours: number;
+  onToggle: (next: boolean) => void;
+  onClearOverride: () => void;
+};
+export const PumpControlCard: React.FC<PumpProps> = ({
+  state, todayHours, weekHours, manualOverride, autoFiltration, waterTemp,
+  recommendedHours, onToggle, onClearOverride,
+}) => {
+  const showOverrideBadge = manualOverride && autoFiltration;
+  return (
+    <Card testID="widget-pump" style={{ flex: 2, minWidth: 380 }}>
+      <View style={styles.metricHead}>
+        <Ionicons name="power" size={18} color={COLORS.brand} />
+        <Text style={styles.metricLabel}>Contrôle pompe</Text>
+        {showOverrideBadge && (
+          <View style={pumpS.badge} testID="pump-override-badge">
+            <Ionicons name="lock-closed" size={12} color={COLORS.warning} />
+            <Text style={pumpS.badgeText}>Mode manuel</Text>
+          </View>
+        )}
+      </View>
+
+      <View style={pumpS.mainRow}>
+        <Pressable
+          onPress={() => onToggle(!state)}
+          testID="pump-main-toggle"
+          style={[
+            pumpS.mainBtn,
+            { backgroundColor: state ? COLORS.success : COLORS.surfaceTertiary,
+              borderColor: state ? COLORS.success : COLORS.borderStrong },
+          ]}
+        >
+          <Ionicons
+            name={state ? "stop-circle" : "play-circle"}
+            size={54}
+            color={state ? "#fff" : COLORS.brand}
+          />
+          <Text style={[pumpS.mainBtnText, { color: state ? "#fff" : COLORS.text }]}>
+            {state ? "Arrêter" : "Démarrer"}
+          </Text>
+          <Text style={[pumpS.mainBtnHint, { color: state ? "rgba(255,255,255,0.85)" : COLORS.textMuted }]}>
+            {state ? "Pompe en marche" : "Pompe arrêtée"}
+          </Text>
+        </Pressable>
+
+        <View style={pumpS.stats}>
+          <View style={pumpS.statBox}>
+            <Text style={pumpS.statLabel}>Aujourd'hui</Text>
+            <Text style={pumpS.statValue}>{todayHours.toFixed(1)}<Text style={pumpS.statUnit}> h</Text></Text>
+          </View>
+          <View style={pumpS.statBox}>
+            <Text style={pumpS.statLabel}>Cette semaine</Text>
+            <Text style={pumpS.statValue}>{weekHours.toFixed(1)}<Text style={pumpS.statUnit}> h</Text></Text>
+          </View>
+          <View style={pumpS.statBox}>
+            <Text style={pumpS.statLabel}>Eau {waterTemp.toFixed(1)} °C</Text>
+            <Text style={[pumpS.statValue, { color: COLORS.metricTemp }]}>
+              {recommendedHours.toFixed(1)}<Text style={pumpS.statUnit}> h</Text>
+            </Text>
+            <Text style={pumpS.statHint}>Recommandé/j (T°/2)</Text>
+          </View>
+        </View>
+      </View>
+
+      {showOverrideBadge && (
+        <Pressable
+          onPress={onClearOverride}
+          style={pumpS.clearBtn}
+          testID="pump-clear-override"
+        >
+          <Ionicons name="refresh-circle" size={20} color={COLORS.brand} />
+          <Text style={pumpS.clearBtnText}>Revenir au planning automatique</Text>
+        </Pressable>
+      )}
+      {!autoFiltration && (
+        <Text style={pumpS.autoDisabledNote}>
+          ⓘ Le pilotage auto est désactivé dans les paramètres — la pompe reste sur commande manuelle.
+        </Text>
+      )}
+    </Card>
+  );
+};
+
+const pumpS = StyleSheet.create({
+  badge: {
+    flexDirection: "row", alignItems: "center", gap: 4,
+    backgroundColor: COLORS.surfaceTertiary,
+    paddingHorizontal: 8, paddingVertical: 3, borderRadius: 999,
+    borderWidth: 1, borderColor: COLORS.warning, marginLeft: "auto",
+  },
+  badgeText: { color: COLORS.warning, fontSize: FS.sm, fontWeight: "600" },
+  mainRow: {
+    flexDirection: "row", gap: SPACING.md, marginTop: SPACING.sm, alignItems: "stretch",
+  },
+  mainBtn: {
+    flex: 1, minWidth: 160, minHeight: 150, borderRadius: 16, borderWidth: 2,
+    alignItems: "center", justifyContent: "center", padding: SPACING.md, gap: 4,
+  },
+  mainBtnText: { fontSize: FS.xl, fontWeight: "700" },
+  mainBtnHint: { fontSize: FS.sm },
+  stats: {
+    flex: 1.4, minWidth: 200, flexDirection: "row", flexWrap: "wrap", gap: SPACING.sm,
+  },
+  statBox: {
+    flexGrow: 1, minWidth: 100, backgroundColor: COLORS.surfaceTertiary,
+    borderRadius: 12, padding: SPACING.md, borderWidth: 1, borderColor: COLORS.border,
+    justifyContent: "center",
+  },
+  statLabel: { color: COLORS.textMuted, fontSize: FS.sm },
+  statValue: { color: COLORS.text, fontSize: 28, fontWeight: "700", marginTop: 2 },
+  statUnit: { color: COLORS.textMuted, fontSize: FS.base, fontWeight: "500" },
+  statHint: { color: COLORS.textMuted, fontSize: 11, marginTop: 2 },
+  clearBtn: {
+    flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8,
+    marginTop: SPACING.md, paddingVertical: 12, borderRadius: 12,
+    backgroundColor: COLORS.surfaceTertiary, borderWidth: 1, borderColor: COLORS.brand,
+  },
+  clearBtnText: { color: COLORS.brand, fontSize: FS.base, fontWeight: "700" },
+  autoDisabledNote: {
+    color: COLORS.textMuted, fontSize: FS.sm, marginTop: SPACING.sm, fontStyle: "italic",
+  },
+});
+
 // -------- Temperature wave card --------
 type WaveProps = { value: number; target: number };
 export const TempWaveCard: React.FC<WaveProps> = ({ value, target }) => (
@@ -79,8 +210,8 @@ export const TempWaveCard: React.FC<WaveProps> = ({ value, target }) => (
 );
 
 // -------- Temperature history chart --------
-type HistProps = { points: { value: number; label?: string }[] };
-export const HistoryChartCard: React.FC<HistProps> = ({ points }) => {
+type HistProps = { points: { value: number; label?: string }[]; range?: "24h" | "7j"; onRangeChange?: (r: "24h" | "7j") => void };
+export const HistoryChartCard: React.FC<HistProps> = ({ points, range = "24h", onRangeChange }) => {
   const data = points.map((p, i) => ({
     value: p.value,
     label: i % Math.ceil(points.length / 6) === 0 ? p.label : "",
@@ -90,7 +221,35 @@ export const HistoryChartCard: React.FC<HistProps> = ({ points }) => {
     <Card testID="widget-history" style={{ flex: 2, minWidth: 380 }}>
       <View style={styles.metricHead}>
         <Ionicons name="trending-up" size={18} color={COLORS.metricTemp} />
-        <Text style={styles.metricLabel}>Historique température (24h)</Text>
+        <Text style={styles.metricLabel}>
+          {range === "7j" ? "Historique température (7 jours)" : "Historique température (24h)"}
+        </Text>
+        {onRangeChange && (
+          <View style={{ flexDirection: "row", marginLeft: "auto", gap: 4 }}>
+            {(["24h", "7j"] as const).map((r) => (
+              <Pressable
+                key={r}
+                onPress={() => onRangeChange(r)}
+                style={{
+                  paddingHorizontal: 10, paddingVertical: 4, borderRadius: 999,
+                  borderWidth: 1,
+                  borderColor: range === r ? COLORS.metricTemp : COLORS.border,
+                  backgroundColor: range === r ? COLORS.surfaceTertiary : "transparent",
+                }}
+                testID={`history-range-${r}`}
+              >
+                <Text
+                  style={{
+                    color: range === r ? COLORS.text : COLORS.textMuted,
+                    fontSize: FS.sm, fontWeight: "600",
+                  }}
+                >
+                  {r}
+                </Text>
+              </Pressable>
+            ))}
+          </View>
+        )}
       </View>
       <View style={{ marginTop: SPACING.sm }}>
         {data.length > 1 ? (

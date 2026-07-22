@@ -16,6 +16,7 @@ type Props = {
 export const ScheduleScreen: React.FC<Props> = ({ schedules, totalHours, recommended, waterTemp, reload }) => {
   const [start, setStart] = useState("08:00");
   const [end, setEnd] = useState("12:00");
+  const [applying, setApplying] = useState(false);
 
   async function add() {
     if (!/^\d{2}:\d{2}$/.test(start) || !/^\d{2}:\d{2}$/.test(end)) return;
@@ -30,6 +31,14 @@ export const ScheduleScreen: React.FC<Props> = ({ schedules, totalHours, recomme
     await api.deleteSchedule(id);
     reload();
   }
+  async function applyAuto() {
+    setApplying(true);
+    try {
+      await api.autoApplySchedule();
+      reload();
+    } catch {}
+    setApplying(false);
+  }
 
   return (
     <ScrollView style={s.wrap} contentContainerStyle={{ padding: SPACING.xl }} testID="schedule-screen">
@@ -41,11 +50,24 @@ export const ScheduleScreen: React.FC<Props> = ({ schedules, totalHours, recomme
           <Text style={s.infoVal}>{totalHours} h / jour</Text>
         </View>
         <View style={s.infoBox}>
-          <Text style={s.infoLabel}>Recommandé (temp / 2)</Text>
+          <Text style={s.infoLabel}>Recommandé (T° / 2)</Text>
           <Text style={[s.infoVal, { color: COLORS.metricTemp }]}>
             {recommended != null ? `${recommended} h` : "—"}
           </Text>
           <Text style={s.infoLabel}>Eau : {waterTemp.toFixed(1)} °C</Text>
+        </View>
+        <View style={[s.infoBox, { justifyContent: "center", alignItems: "flex-start" }]}>
+          <Text style={s.infoLabel}>Auto-planning (chaque nuit)</Text>
+          <Pressable
+            onPress={applyAuto}
+            disabled={applying}
+            style={[s.autoBtn, applying && { opacity: 0.6 }]}
+            testID="apply-auto-schedule"
+          >
+            <Ionicons name="sparkles" size={18} color="#fff" />
+            <Text style={s.autoBtnText}>{applying ? "Application…" : "Appliquer maintenant"}</Text>
+          </Pressable>
+          <Text style={s.hint}>Remplace les créneaux par le calcul temp/2.</Text>
         </View>
       </View>
 
@@ -122,4 +144,11 @@ const s = StyleSheet.create({
     borderRadius: RADIUS.md, flexDirection: "row", alignItems: "center", gap: SPACING.xs,
     alignSelf: "flex-end",
   },
+  autoBtn: {
+    backgroundColor: COLORS.brand, paddingHorizontal: SPACING.lg, paddingVertical: SPACING.md,
+    borderRadius: RADIUS.md, flexDirection: "row", alignItems: "center", gap: SPACING.xs,
+    marginTop: SPACING.sm,
+  },
+  autoBtnText: { color: "#fff", fontSize: FS.base, fontWeight: "700" },
+  hint: { color: COLORS.textMuted, fontSize: FS.sm, marginTop: SPACING.xs },
 });

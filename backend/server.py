@@ -49,6 +49,8 @@ DEFAULT_SETTINGS = {
     "pressure_auto_cutoff": True,
     "auto_filtration": True,
     "screen_sleep_minutes": 5,
+    "pump_manual_override": False,
+    "auto_schedule_last_date": "",
 }
 
 DEFAULT_EQUIPMENT = [
@@ -65,6 +67,7 @@ DEFAULT_SCHEDULES = [
 ]
 
 DEFAULT_WIDGETS = [
+    {"id": "pump", "name": "Contrôle pompe", "enabled": 1, "order_num": 0},
     {"id": "temp", "name": "Température de l'eau", "enabled": 1, "order_num": 1},
     {"id": "ph", "name": "pH", "enabled": 1, "order_num": 2},
     {"id": "orp", "name": "Redox (ORP)", "enabled": 1, "order_num": 3},
@@ -131,6 +134,7 @@ class SettingsPayload(BaseModel):
     pressure_auto_cutoff: Optional[bool] = None
     auto_filtration: Optional[bool] = None
     screen_sleep_minutes: Optional[int] = None
+    pump_manual_override: Optional[bool] = None
 
 
 # ==============================================================
@@ -225,6 +229,13 @@ async def init_db():
                     "INSERT INTO widgets(id,name,enabled,order_num) VALUES(?,?,?,?)",
                     (w["id"], w["name"], w["enabled"], w["order_num"]),
                 )
+        else:
+            # Migration: ensure any newly-added default widgets exist for existing DBs
+            for w in DEFAULT_WIDGETS:
+                await db.execute(
+                    "INSERT OR IGNORE INTO widgets(id,name,enabled,order_num) VALUES(?,?,?,?)",
+                    (w["id"], w["name"], w["enabled"], w["order_num"]),
+                )
         # Seed 24h of temperature history
         cur = await db.execute("SELECT COUNT(*) FROM readings WHERE metric='temp'")
         if (await cur.fetchone())[0] == 0:
@@ -301,6 +312,158 @@ async def log_equipment_event(equipment_id: str, action: str, source: str, reaso
              _iso(datetime.now(timezone.utc))),
         )
         await db.commit()
+
+
+async def _set_setting(key: str, value: Any):
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            "INSERT INTO settings(key,value) VALUES(?,?) "
+            "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            (key, json.dumps(value)),
+        )
+        await db.commit()
+
+
+# -------- Pump runtime & schedule helpers --------
+def _today_start_utc() -> datetime:
+    now = datetime.now(timezone.utc)
+    return now.replace(hour=0, minute=0, second=0, microsecond=0)
+
+
+def _week_start_utc() -> datetime:
+    now = datetime.now(timezone.utc)
+    monday = now - timedelta(days=now.weekday())
+    return monday.replace(hour=0, minute=0, second=0, microsecond=0)
+
+
+async def _compute_runtime_hours(equipment_id: str, since: datetime) -> float:
+    """Compute total ON hours for an equipment since a UTC datetime.
+    Uses equipment_events plus the current state to cover the open interval."""
+    now = datetime.now(timezone.utc)
+    since_iso = _iso(since)
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        # State immediately before `since`: use last event before that.
+        cur = await db.execute(
+            "SELECT action FROM equipment_events "
+            "WHERE equipment_id=? AND ts < ? ORDER BY ts DESC LIMIT 1",
+            (equipment_id, since_iso),
+        )
+        row = await cur.fetchone()
+        state_at_since = (row["action"] == "on") if row else False
+
+        cur = await db.execute(
+            "SELECT action, ts FROM equipment_events "
+            "WHERE equipment_id=? AND ts >= ? ORDER BY ts ASC",
+            (equipment_id, since_iso),
+        )
+        events = [dict(r) for r in await cur.fetchall()]
+
+    total_sec = 0.0
+    cur_state = state_at_since
+    cur_ts = since
+    for e in events:
+        try:
+            ts = datetime.fromisoformat(e["ts"].replace("Z", "+00:00"))
+        except Exception:
+            continue
+        if cur_state:
+            total_sec += (ts - cur_ts).total_seconds()
+        cur_state = (e["action"] == "on")
+        cur_ts = ts
+    if cur_state:
+        total_sec += (now - cur_ts).total_seconds()
+    return round(max(0.0, total_sec) / 3600.0, 2)
+
+
+def _time_str_to_minutes(t: str) -> int:
+    h, m = t.split(":")
+    return int(h) * 60 + int(m)
+
+
+def _minute_in_schedule(minute: int, schedules: List[Dict[str, Any]]) -> bool:
+    """Return True if the given minute-of-day falls within any enabled slot.
+    Handles wrap-around slots like 22:00 → 06:00."""
+    for s in schedules:
+        if not s.get("enabled"):
+            continue
+        start_m = _time_str_to_minutes(s["start"])
+        end_m = _time_str_to_minutes(s["end"])
+        if start_m == end_m:
+            continue
+        if start_m < end_m:
+            if start_m <= minute < end_m:
+                return True
+        else:
+            # Wrap-around: e.g. 22:00 → 06:00
+            if minute >= start_m or minute < end_m:
+                return True
+    return False
+
+
+def _distribute_hours_into_slots(total_hours: float) -> List[Dict[str, Any]]:
+    """Turn a daily runtime (hours) into 1-3 non-overlapping slots.
+    Rule of thumb (pool best practice):
+      • split around solar noon (10-16h): main slot covers the warmest hours,
+      • add early-morning / late-evening slots for longer runtimes.
+    Always returns tuples in ascending order."""
+    h = max(0.0, min(24.0, float(total_hours)))
+    if h <= 0.1:
+        return []
+    slots: List[Dict[str, Any]] = []
+    if h <= 6:
+        # Single slot centered on solar noon (13:00)
+        half = h / 2
+        start = 13 - half
+        end = 13 + half
+        slots.append({"start": _fmt_hh(start), "end": _fmt_hh(end), "enabled": True})
+    elif h <= 12:
+        # Two slots: morning + afternoon
+        morning = h * 0.4
+        afternoon = h - morning
+        slots.append({"start": _fmt_hh(9 - morning / 2), "end": _fmt_hh(9 + morning / 2), "enabled": True})
+        slots.append({"start": _fmt_hh(15 - afternoon / 2), "end": _fmt_hh(15 + afternoon / 2), "enabled": True})
+    else:
+        # Three slots: morning + midday + evening
+        third = h / 3
+        # Morning around 08:00, midday around 13:00, evening around 20:00
+        slots.append({"start": _fmt_hh(8 - third / 2), "end": _fmt_hh(8 + third / 2), "enabled": True})
+        slots.append({"start": _fmt_hh(14 - third / 2), "end": _fmt_hh(14 + third / 2), "enabled": True})
+        slots.append({"start": _fmt_hh(20 - third / 2), "end": _fmt_hh(20 + third / 2), "enabled": True})
+    return slots
+
+
+def _fmt_hh(h_float: float) -> str:
+    """Convert float hours (e.g. 8.5) to HH:MM. Handles negatives / >24 by wrapping."""
+    h = h_float % 24
+    hh = int(h)
+    mm = int(round((h - hh) * 60))
+    if mm == 60:
+        hh = (hh + 1) % 24
+        mm = 0
+    return f"{hh:02d}:{mm:02d}"
+
+
+async def _apply_auto_schedule(reason: str = "auto"):
+    """Recompute filtration schedules from current water temperature (temp/2 rule)."""
+    temp = float(sensor_state.get("temp", {}).get("value") or 26.0)
+    hours = compute_filtration_hours(temp)
+    slots = _distribute_hours_into_slots(hours)
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("DELETE FROM schedules")
+        for s in slots:
+            await db.execute(
+                "INSERT INTO schedules(id,start,end,enabled) VALUES(?,?,?,?)",
+                (str(uuid.uuid4()), s["start"], s["end"], 1 if s["enabled"] else 0),
+            )
+        await db.commit()
+    today = datetime.now(timezone.utc).date().isoformat()
+    await _set_setting("auto_schedule_last_date", today)
+    logger.info(
+        "Auto-schedule applied (%s): temp=%.1f°C → %.1fh over %d slot(s)",
+        reason, temp, hours, len(slots),
+    )
+    return {"water_temp": temp, "hours": round(hours, 1), "slots": slots}
 
 
 # Track alert state per metric so we only fire on transitions (no spam)
@@ -432,6 +595,85 @@ async def sensor_simulator_loop():
         await asyncio.sleep(2)
 
 
+async def pump_scheduler_loop():
+    """Enforce filtration schedules every minute.
+    Turns the pump ON/OFF according to programmed slots UNLESS:
+      • auto_filtration is disabled, or
+      • pump_manual_override is enabled (user forced state)."""
+    # Give the DB / sensors ~10 s to warm up
+    await asyncio.sleep(10)
+    while True:
+        try:
+            settings = await get_settings_dict()
+            if not settings.get("auto_filtration", True):
+                await asyncio.sleep(30)
+                continue
+            if settings.get("pump_manual_override"):
+                await asyncio.sleep(30)
+                continue
+
+            # Get schedules + current pump state
+            async with aiosqlite.connect(DB_PATH) as db:
+                db.row_factory = aiosqlite.Row
+                cur = await db.execute("SELECT id, start, end, enabled FROM schedules")
+                scheds = [dict(r) for r in await cur.fetchall()]
+                cur = await db.execute("SELECT state FROM equipment WHERE id='filtration'")
+                r = await cur.fetchone()
+                pump_state = bool(r["state"]) if r else False
+
+            # Local time (Pi is expected to run in the customer's timezone)
+            now_local = datetime.now()
+            minute_of_day = now_local.hour * 60 + now_local.minute
+            desired_state = _minute_in_schedule(minute_of_day, scheds)
+
+            if desired_state != pump_state:
+                async with aiosqlite.connect(DB_PATH) as db:
+                    await db.execute(
+                        "UPDATE equipment SET state=? WHERE id='filtration'",
+                        (1 if desired_state else 0,),
+                    )
+                    if not desired_state:
+                        # Coupling rule: pump OFF ⇒ electrolyseur OFF
+                        await db.execute(
+                            "UPDATE equipment SET state=0 WHERE id='electrolyseur'"
+                        )
+                    await db.commit()
+                await log_equipment_event(
+                    "filtration", "on" if desired_state else "off", "scheduler",
+                    "Créneau programmé",
+                )
+                if not desired_state:
+                    await log_equipment_event(
+                        "electrolyseur", "off", "coupling",
+                        "Arrêt automatique suite au créneau de fin de filtration",
+                    )
+                logger.info("Scheduler → filtration=%s", desired_state)
+        except Exception as exc:
+            logger.exception("pump scheduler loop error: %s", exc)
+        await asyncio.sleep(30)
+
+
+async def auto_schedule_daily_loop():
+    """Recompute filtration schedules from water temperature once per day
+    (target time: 03:00 local). Idempotent — never runs twice for the same date."""
+    await asyncio.sleep(30)  # let backend settle
+    while True:
+        try:
+            settings = await get_settings_dict()
+            if not settings.get("auto_filtration", True):
+                await asyncio.sleep(1800)
+                continue
+            now_local = datetime.now()
+            today = now_local.date().isoformat()
+            last = settings.get("auto_schedule_last_date") or ""
+            # Run at 03:00 or later, once per day
+            if last != today and now_local.hour >= 3:
+                await _apply_auto_schedule("daily")
+        except Exception as exc:
+            logger.exception("auto schedule loop error: %s", exc)
+        await asyncio.sleep(1800)  # check every 30 min
+
+
 # ==============================================================
 # OPTIONAL MQTT BRIDGE
 # ==============================================================
@@ -550,6 +792,10 @@ async def toggle_equipment(eid: str, payload: EquipmentToggle):
                 eid, "on" if payload.state else "off", "user",
                 "Action manuelle depuis l'interface",
             )
+            # Any manual filtration toggle activates the manual override so the
+            # scheduler stops touching the pump until the user clears it.
+            if eid == "filtration":
+                await _set_setting("pump_manual_override", True)
 
         # Business rule: stopping filtration also stops electrolyseur (safety)
         if eid == "filtration" and not payload.state:
@@ -583,6 +829,51 @@ async def equipment_events(limit: int = 100, equipment_id: Optional[str] = None)
         async for row in await db.execute(q, params):
             items.append(dict(row))
     return {"events": items}
+
+
+async def _pump_runtime_payload() -> Dict[str, Any]:
+    today_h = await _compute_runtime_hours("filtration", _today_start_utc())
+    week_h = await _compute_runtime_hours("filtration", _week_start_utc())
+    settings = await get_settings_dict()
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cur = await db.execute("SELECT state FROM equipment WHERE id='filtration'")
+        r = await cur.fetchone()
+        pump_state = bool(r["state"]) if r else False
+    temp = float(sensor_state.get("temp", {}).get("value") or 0)
+    return {
+        "state": pump_state,
+        "today_hours": today_h,
+        "week_hours": week_h,
+        "manual_override": bool(settings.get("pump_manual_override")),
+        "auto_filtration": bool(settings.get("auto_filtration", True)),
+        "water_temp": round(temp, 1),
+        "recommended_hours": round(compute_filtration_hours(temp), 1),
+    }
+
+
+@api_router.get("/equipment/pump/runtime")
+async def pump_runtime():
+    return await _pump_runtime_payload()
+
+
+@api_router.post("/equipment/pump/clear-override")
+async def clear_pump_override():
+    """Return the pump to its programmed schedule. The scheduler will
+    resume control on the next tick (≤ 30 s)."""
+    await _set_setting("pump_manual_override", False)
+    await log_equipment_event(
+        "filtration", "override_off", "user",
+        "Reprise du planning automatique (fin du mode manuel)",
+    )
+    return {"ok": True}
+
+
+@api_router.post("/schedule/auto-apply")
+async def schedule_auto_apply():
+    """Manually recompute schedules from the current water temperature."""
+    payload = await _apply_auto_schedule("manual")
+    return {"ok": True, **payload}
 
 
 async def _schedules_list():
@@ -759,6 +1050,7 @@ async def dashboard_summary():
     equipment_resp = await get_equipment()
     schedules = await _schedules_list()
     widgets = await _widgets_list()
+    pump_info = await _pump_runtime_payload()
     latest_alerts = []
     unresolved = 0
     async with aiosqlite.connect(DB_PATH) as db:
@@ -783,6 +1075,7 @@ async def dashboard_summary():
             "last_update": _iso(system_state["last_update"]),
         },
         "recommended_filtration_hours": round(compute_filtration_hours(sensor_state["temp"]["value"]), 1),
+        "pump": pump_info,
     }
 
 
@@ -1033,6 +1326,8 @@ app.add_middleware(
 async def _startup():
     await init_db()
     asyncio.create_task(sensor_simulator_loop())
+    asyncio.create_task(pump_scheduler_loop())
+    asyncio.create_task(auto_schedule_daily_loop())
     start_mqtt_bridge()
     logger.info("Appli piscine backend ready. DB=%s", DB_PATH)
 

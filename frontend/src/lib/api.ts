@@ -34,6 +34,9 @@ export const api = {
     req("/widgets", { method: "PUT", body: JSON.stringify(widgets) }),
   system: () => req("/system/status"),
   wifi: () => req("/system/wifi"),
+  pumpRuntime: () => req("/equipment/pump/runtime"),
+  clearPumpOverride: () => req("/equipment/pump/clear-override", { method: "POST" }),
+  autoApplySchedule: () => req("/schedule/auto-apply", { method: "POST" }),
 };
 
 export type Sensor = { metric: string; value: number; unit: string };

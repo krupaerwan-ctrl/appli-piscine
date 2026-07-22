@@ -3,7 +3,7 @@ import { View, StyleSheet, ScrollView } from "react-native";
 import { COLORS, SPACING } from "../lib/theme";
 import {
   TempWaveCard, MetricCard, HistoryChartCard, PressureCard,
-  EquipmentCard, ScheduleCard, SystemStateCard, AlertsCard,
+  EquipmentCard, ScheduleCard, SystemStateCard, AlertsCard, PumpControlCard,
 } from "../components/Widgets";
 import { api } from "../lib/api";
 
@@ -11,6 +11,7 @@ type Props = { data: any; reload: () => void };
 
 // Preferred min-widths per widget so the flex-wrap grid still looks clean
 const W: Record<string, number> = {
+  pump: 520,
   temp: 220, ph: 220, orp: 220, salinity: 220,
   history: 480, pressure: 240,
   equipment: 280, schedule: 280, system: 280, alerts: 280,
@@ -18,15 +19,23 @@ const W: Record<string, number> = {
 
 export const DashboardScreen: React.FC<Props> = ({ data, reload, onToggleEquipment }) => {
   const [history, setHistory] = useState<any[]>([]);
+  const [histRange, setHistRange] = useState<"24h" | "7j">("24h");
   useEffect(() => {
-    api.history("temp", 24).then((r) => {
-      const pts = r.points.map((p: any) => ({
-        value: p.value,
-        label: new Date(p.ts).getHours() + "h",
-      }));
+    const hours = histRange === "7j" ? 168 : 24;
+    api.history("temp", hours).then((r) => {
+      const isMulti = hours > 24;
+      const pts = r.points.map((p: any) => {
+        const d = new Date(p.ts);
+        return {
+          value: p.value,
+          label: isMulti
+            ? d.toLocaleDateString("fr-FR", { weekday: "short" }).replace(".", "")
+            : d.getHours() + "h",
+        };
+      });
       setHistory(pts);
     }).catch(() => {});
-  }, []);
+  }, [histRange]);
 
   if (!data) return <View style={{ flex: 1, backgroundColor: COLORS.surface }} />;
 
@@ -44,6 +53,30 @@ export const DashboardScreen: React.FC<Props> = ({ data, reload, onToggleEquipme
 
   const renderWidget = (id: string) => {
     switch (id) {
+      case "pump": {
+        const p = data.pump || {
+          state: false, today_hours: 0, week_hours: 0,
+          manual_override: false, auto_filtration: true,
+          water_temp: sensors.temp?.value ?? 0,
+          recommended_hours: data.recommended_filtration_hours ?? 0,
+        };
+        return (
+          <PumpControlCard
+            state={!!p.state}
+            todayHours={Number(p.today_hours) || 0}
+            weekHours={Number(p.week_hours) || 0}
+            manualOverride={!!p.manual_override}
+            autoFiltration={!!p.auto_filtration}
+            waterTemp={Number(p.water_temp) || 0}
+            recommendedHours={Number(p.recommended_hours) || 0}
+            onToggle={(next) => toggleEquipment("filtration", next)}
+            onClearOverride={async () => {
+              try { await api.clearPumpOverride(); } catch {}
+              reload();
+            }}
+          />
+        );
+      }
       case "temp":
         return <TempWaveCard value={sensors.temp?.value ?? 0} target={settings.temp_target ?? 28} />;
       case "ph":
@@ -68,7 +101,7 @@ export const DashboardScreen: React.FC<Props> = ({ data, reload, onToggleEquipme
             min={2500} max={4500} current={sensors.salinity?.value ?? 3500} />
         );
       case "history":
-        return <HistoryChartCard points={history} />;
+        return <HistoryChartCard points={history} range={histRange} onRangeChange={setHistRange} />;
       case "pressure":
         return (
           <PressureCard
