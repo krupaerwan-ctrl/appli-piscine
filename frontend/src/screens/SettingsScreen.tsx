@@ -262,6 +262,16 @@ export const SettingsScreen: React.FC<Props> = ({ settings, onSaved }) => {
               {updateState === "failed" && "Échec de la mise à jour"}
               {updateState === "idle" && "En attente"}
             </Text>
+            {updateState !== "running" && (
+              <Pressable
+                onPress={() => { setUpdateLog(""); setUpdateState("idle"); }}
+                style={s.dismissBtn}
+                testID="update-dismiss"
+              >
+                <Ionicons name="close" size={16} color={COLORS.textSecondary} />
+                <Text style={s.dismissText}>Fermer</Text>
+              </Pressable>
+            )}
           </View>
           <ScrollView
             ref={logScroll}
@@ -370,6 +380,13 @@ const s = StyleSheet.create({
   updateHead: { flexDirection: "row", alignItems: "center", gap: SPACING.sm, marginBottom: SPACING.sm },
   updateDot: { width: 10, height: 10, borderRadius: 5 },
   updateStateText: { color: COLORS.text, fontWeight: "600" },
+  dismissBtn: {
+    marginLeft: "auto", flexDirection: "row", alignItems: "center", gap: 4,
+    paddingHorizontal: SPACING.md, paddingVertical: 6,
+    borderRadius: RADIUS.md, borderWidth: 1, borderColor: COLORS.border,
+    backgroundColor: COLORS.surfaceTertiary,
+  },
+  dismissText: { color: COLORS.textSecondary, fontSize: FS.sm, fontWeight: "600" },
   logBox: {
     maxHeight: 200, backgroundColor: "#000", borderRadius: RADIUS.md,
     padding: SPACING.sm, borderWidth: 1, borderColor: COLORS.border,

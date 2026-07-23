@@ -93,10 +93,14 @@ fi
 
 echo "-- Recompilation du frontend (2-5 min)..."
 cd "$HOME_DIR/frontend"
+# --ignore-engines: some Expo/RN devDeps require Node ≥20.19.4 which many Pis
+# don't ship yet. We ignore the engine strict check because the built output
+# runs in Chromium, not Node, so a slightly older Node at build time is fine.
 if command -v yarn >/dev/null 2>&1; then
-    yarn install --silent
+    yarn install --silent --ignore-engines || yarn install --ignore-engines
 else
-    npm install --silent
+    npm install --silent --legacy-peer-deps --engine-strict=false || \
+        npm install --legacy-peer-deps --engine-strict=false
 fi
 npx expo export -p web
 
