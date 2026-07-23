@@ -52,6 +52,20 @@ export const api = {
   markMaintenanceDone: (id: string) =>
     req(`/maintenance/${id}/done`, { method: "POST" }),
   testPush: () => req("/push/test", { method: "POST" }),
+  zigbee: {
+    list: () => req("/zigbee/devices"),
+    status: () => req("/zigbee/status"),
+    permitJoin: (duration = 60) =>
+      req(`/zigbee/permit-join?duration=${duration}`, { method: "POST" }),
+    permitJoinStop: () =>
+      req("/zigbee/permit-join/stop", { method: "POST" }),
+    brokerTest: () => req("/zigbee/broker/test", { method: "POST" }),
+    update: (id: string, body: any) =>
+      req(`/zigbee/devices/${id}`, { method: "PUT", body: JSON.stringify(body) }),
+    remove: (id: string) =>
+      req(`/zigbee/devices/${id}`, { method: "DELETE" }),
+    rescan: () => req("/zigbee/devices/rescan", { method: "POST" }),
+  },
 };
 
 export type Sensor = { metric: string; value: number; unit: string };

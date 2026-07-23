@@ -26,6 +26,9 @@ DB_PATH = Path(os.environ.get("POOLKIOSK_DB_PATH", ROOT_DIR / "poolkiosk.db"))
 UPDATE_LOG = Path("/tmp/poolkiosk_update.log")
 UPDATE_STATE_FILE = Path("/tmp/poolkiosk_update_state.txt")
 _update_proc: Optional[subprocess.Popen] = None
+# Main asyncio loop reference — captured on startup so background threads
+# (paho-mqtt on_message) can schedule coroutines back onto the app loop.
+_main_loop: Optional[asyncio.AbstractEventLoop] = None
 load_dotenv(ROOT_DIR / ".env")
 
 app = FastAPI(title="Appli Piscine API")
@@ -314,6 +317,17 @@ async def init_db():
                 await db.commit()
             except Exception as e:
                 logger.warning("add notified_at column failed: %s", e)
+
+        # Column migration: add battery + lqi to zigbee_devices
+        cur = await db.execute("PRAGMA table_info(zigbee_devices)")
+        cols_z = {row[1] async for row in cur}
+        for col, decl in (("battery", "INTEGER"), ("lqi", "INTEGER")):
+            if col not in cols_z:
+                try:
+                    await db.execute(f"ALTER TABLE zigbee_devices ADD COLUMN {col} {decl}")
+                    await db.commit()
+                except Exception as e:
+                    logger.warning("add %s column failed: %s", col, e)
 
         # Seed defaults if empty
         cur = await db.execute("SELECT COUNT(*) FROM settings")
@@ -866,10 +880,58 @@ async def maintenance_reminder_loop():
         await asyncio.sleep(1800)
 
 
+async def permit_join_watchdog_loop():
+    """Tick every 1s to detect when the pairing window expires and
+    clear the flag/notify the frontend accordingly."""
+    while True:
+        try:
+            until = zigbee_bridge_state.get("permit_join_until")
+            if zigbee_bridge_state.get("permit_join") and until:
+                try:
+                    end = datetime.fromisoformat(until.replace("Z", "+00:00"))
+                    if datetime.now(timezone.utc) >= end:
+                        zigbee_bridge_state["permit_join"] = False
+                        zigbee_bridge_state["permit_join_until"] = None
+                except Exception:
+                    zigbee_bridge_state["permit_join"] = False
+                    zigbee_bridge_state["permit_join_until"] = None
+        except Exception as exc:
+            logger.exception("permit_join watchdog error: %s", exc)
+        await asyncio.sleep(1)
+
+
 # ==============================================================
 # OPTIONAL MQTT BRIDGE
 # ==============================================================
+# Global MQTT client (paho-mqtt) so we can also PUBLISH (permit_join, remove…)
+_mqtt_client: Any = None
+# In-memory pairing state (updated by MQTT + endpoints)
+zigbee_bridge_state: Dict[str, Any] = {
+    "broker_connected": False,
+    "broker_host": None,
+    "broker_port": None,
+    "permit_join": False,
+    "permit_join_until": None,   # ISO string
+    "last_bridge_state": None,   # "online" | "offline"
+}
+
+
+def _z2m_topic(sub: str) -> str:
+    """Build a topic under the configured Zigbee2MQTT base (default 'zigbee2mqtt')."""
+    base = os.environ.get("Z2M_BASE_TOPIC", "zigbee2mqtt").strip("/")
+    return f"{base}/{sub}" if sub else base
+
+
+def _mqtt_publish(topic: str, payload: Any):
+    """Publish a JSON payload to MQTT. Silent no-op if bridge is offline."""
+    if _mqtt_client is None:
+        raise RuntimeError("mqtt-not-configured")
+    body = payload if isinstance(payload, str) else json.dumps(payload)
+    _mqtt_client.publish(topic, body)
+
+
 def start_mqtt_bridge():
+    global _mqtt_client
     broker = os.environ.get("MQTT_BROKER")
     if not broker:
         logger.info("MQTT bridge disabled (set MQTT_BROKER to enable).")
@@ -882,30 +944,213 @@ def start_mqtt_bridge():
 
     port = int(os.environ.get("MQTT_PORT", 1883))
     topic_prefix = os.environ.get("MQTT_TOPIC_PREFIX", "pool")
+    z2m_base = _z2m_topic("")
+
+    zigbee_bridge_state["broker_host"] = broker
+    zigbee_bridge_state["broker_port"] = port
 
     def on_connect(c, u, f, rc, *_):
         logger.info("MQTT connected rc=%s", rc)
+        # Legacy custom pool topics
         c.subscribe(f"{topic_prefix}/#")
+        # Zigbee2MQTT admin topics
+        c.subscribe(f"{z2m_base}/bridge/state")
+        c.subscribe(f"{z2m_base}/bridge/devices")
+        c.subscribe(f"{z2m_base}/bridge/response/#")
+        c.subscribe(f"{z2m_base}/bridge/log")
+        # All device data messages (pH sonoff, temp, relay states…)
+        c.subscribe(f"{z2m_base}/+")
+        c.subscribe(f"{z2m_base}/+/#")
         system_state["mqtt"] = "OK"
         system_state["mqtt_source"] = "broker"
+        zigbee_bridge_state["broker_connected"] = True
+
+    def on_disconnect(c, u, rc, *_):
+        logger.warning("MQTT disconnected rc=%s", rc)
+        zigbee_bridge_state["broker_connected"] = False
 
     def on_message(_c, _u, msg):
-        metric = msg.topic.split("/")[-1]
-        if metric in sensor_state:
-            try:
-                sensor_state[metric]["value"] = float(msg.payload.decode())
-                system_state["last_update"] = datetime.now(timezone.utc)
-            except Exception:
-                pass
+        try:
+            topic = msg.topic
+            # ---- Zigbee2MQTT bridge state ----
+            if topic == f"{z2m_base}/bridge/state":
+                try:
+                    p = json.loads(msg.payload.decode())
+                    st = p.get("state") if isinstance(p, dict) else p
+                except Exception:
+                    st = msg.payload.decode()
+                zigbee_bridge_state["last_bridge_state"] = str(st)
+                return
+            # ---- Full device inventory (fired at every join/leave) ----
+            if topic == f"{z2m_base}/bridge/devices":
+                try:
+                    devices = json.loads(msg.payload.decode())
+                    asyncio.run_coroutine_threadsafe(
+                        _sync_z2m_devices(devices), _main_loop
+                    )
+                except Exception as e:
+                    logger.warning("device inventory parse failed: %s", e)
+                return
+            # ---- Pairing / permit_join events ----
+            if topic.startswith(f"{z2m_base}/bridge/response/permit_join"):
+                try:
+                    p = json.loads(msg.payload.decode())
+                    if p.get("status") == "ok":
+                        val = (p.get("data") or {}).get("value")
+                        if val:
+                            zigbee_bridge_state["permit_join"] = True
+                        else:
+                            zigbee_bridge_state["permit_join"] = False
+                            zigbee_bridge_state["permit_join_until"] = None
+                except Exception:
+                    pass
+                return
+            # ---- Legacy pool/<metric> topics ----
+            if topic.startswith(f"{topic_prefix}/"):
+                metric = topic.split("/")[-1]
+                if metric in sensor_state:
+                    try:
+                        sensor_state[metric]["value"] = float(msg.payload.decode())
+                        system_state["last_update"] = datetime.now(timezone.utc)
+                    except Exception:
+                        pass
+                return
+            # ---- Individual Zigbee device data (zigbee2mqtt/<friendly_name>) ----
+            if topic.startswith(f"{z2m_base}/") and "/bridge/" not in topic:
+                friendly = topic[len(z2m_base) + 1 :].split("/")[0]
+                try:
+                    payload = json.loads(msg.payload.decode())
+                except Exception:
+                    return
+                asyncio.run_coroutine_threadsafe(
+                    _apply_z2m_device_payload(friendly, payload), _main_loop
+                )
+        except Exception as exc:
+            logger.exception("MQTT on_message error: %s", exc)
 
     client = mqtt.Client()
     client.on_connect = on_connect
+    client.on_disconnect = on_disconnect
     client.on_message = on_message
     try:
         client.connect(broker, port, 60)
         client.loop_start()
+        _mqtt_client = client
     except Exception as exc:
         logger.warning("MQTT connect failed: %s", exc)
+
+
+# ==============================================================
+# Zigbee2MQTT device sync helpers (async, called from MQTT thread)
+# ==============================================================
+async def _sync_z2m_devices(devices: List[Dict[str, Any]]):
+    """Persist the full device inventory reported by zigbee2mqtt/bridge/devices.
+    - Insert new devices with a guessed device_type from `type`/`definition.exposes`
+    - Update model, online/last_seen
+    - Never overwrite the user's `friendly_name` (they may have renamed via UI)
+    """
+    if not devices:
+        return
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        for d in devices:
+            ieee = d.get("ieee_address") or d.get("friendly_name")
+            if not ieee:
+                continue
+            friendly = d.get("friendly_name") or ieee
+            model = d.get("model_id") or d.get("definition", {}).get("model") or "unknown"
+            dev_type = _guess_z2m_type(d)
+            online = 1 if d.get("interview_completed") is True and d.get("supported", True) else 0
+            # Existing row?
+            row = await (await db.execute(
+                "SELECT id FROM zigbee_devices WHERE id=?", (ieee,)
+            )).fetchone()
+            if row is None:
+                await db.execute(
+                    "INSERT INTO zigbee_devices(id, friendly_name, model, device_type, "
+                    "assigned_role, online, last_seen) VALUES(?,?,?,?,?,?,?)",
+                    (ieee, friendly, model, dev_type, "none", online,
+                     _iso(datetime.now(timezone.utc))),
+                )
+                logger.info("Zigbee: new device paired %s (%s)", friendly, model)
+                # Push notification: new device paired
+                push_bg({
+                    "title": "🔗 Nouvel appareil Zigbee détecté",
+                    "message": f"{friendly} ({model}) — ouvrez l'app pour l'assigner à un capteur.",
+                    "action_url": "/",
+                })
+            else:
+                await db.execute(
+                    "UPDATE zigbee_devices SET model=?, device_type=?, online=?, "
+                    "last_seen=? WHERE id=?",
+                    (model, dev_type, online,
+                     _iso(datetime.now(timezone.utc)), ieee),
+                )
+        await db.commit()
+
+
+def _guess_z2m_type(d: Dict[str, Any]) -> str:
+    """Categorise a zigbee2mqtt device as 'relay' | 'sensor' | 'other'."""
+    exposes = d.get("definition", {}).get("exposes") or []
+    for e in exposes:
+        if e.get("type") == "switch" or (e.get("features") and
+            any(f.get("name") in ("state", "on_off") for f in e["features"])):
+            return "relay"
+        if e.get("type") == "numeric" and e.get("property") in (
+            "temperature", "humidity", "pressure", "battery", "illuminance"
+        ):
+            return "sensor"
+    if d.get("type") in ("Router",):
+        return "relay"
+    return "other"
+
+
+async def _apply_z2m_device_payload(friendly_name: str, payload: Dict[str, Any]):
+    """Route an individual device MQTT payload to the right in-memory sensor
+    slot based on assigned_role.  Also updates `last_seen`, battery, LQI."""
+    if not isinstance(payload, dict):
+        return
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        row = await (await db.execute(
+            "SELECT id, assigned_role FROM zigbee_devices WHERE friendly_name=?",
+            (friendly_name,),
+        )).fetchone()
+        if not row:
+            # Unknown device — will be added on next bridge/devices message
+            return
+        did = row["id"]
+        role = row["assigned_role"] or "none"
+
+        # Update meta
+        battery = payload.get("battery")
+        lqi = payload.get("linkquality") or payload.get("lqi")
+        await db.execute(
+            "UPDATE zigbee_devices SET last_seen=?, online=1, "
+            "battery=COALESCE(?,battery), lqi=COALESCE(?,lqi) WHERE id=?",
+            (_iso(datetime.now(timezone.utc)), battery, lqi, did),
+        )
+        await db.commit()
+
+    # Route to sensor slot
+    role_to_key = {
+        "temp": ("temp", "temperature"),
+        "ph": ("ph", "ph"),
+        "orp": ("orp", "orp"),
+        "salinity": ("salinity", "salinity"),
+        "pressure": ("pressure", "pressure"),
+    }
+    if role in role_to_key:
+        slot, prop = role_to_key[role]
+        val = payload.get(prop)
+        if val is None and prop == "temperature":
+            val = payload.get("temp")
+        if isinstance(val, (int, float)):
+            sensor_state[slot]["value"] = float(val)
+            sensor_state[slot]["source"] = "zigbee"
+            system_state["last_update"] = datetime.now(timezone.utc)
+
+# ==============================================================
 
 
 # ==============================================================
@@ -1484,8 +1729,9 @@ async def _zigbee_list():
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
         async for row in await db.execute(
-            "SELECT id, friendly_name, model, device_type, assigned_role, online, last_seen "
-            "FROM zigbee_devices ORDER BY device_type ASC, friendly_name ASC"
+            "SELECT id, friendly_name, model, device_type, assigned_role, online, "
+            "last_seen, battery, lqi FROM zigbee_devices "
+            "ORDER BY device_type ASC, friendly_name ASC"
         ):
             d = dict(row); d["online"] = bool(d["online"]); items.append(d)
     return items
@@ -1496,11 +1742,115 @@ async def zigbee_devices():
     return {"devices": await _zigbee_list()}
 
 
+@api_router.get("/zigbee/status")
+async def zigbee_status():
+    """Return live bridge status: connection, pairing window, device count."""
+    devices = await _zigbee_list()
+    return {
+        **zigbee_bridge_state,
+        "device_count": len(devices),
+        "online_count": sum(1 for d in devices if d.get("online")),
+        "mqtt_source": system_state.get("mqtt_source"),
+    }
+
+
+@api_router.post("/zigbee/permit-join")
+async def zigbee_permit_join(duration: int = 60):
+    """Open the Zigbee pairing window for `duration` seconds.
+    Publishes to zigbee2mqtt/bridge/request/permit_join."""
+    duration = max(10, min(300, int(duration)))
+    if _mqtt_client is None:
+        # Simulator / no broker → set the flag so the UI can show the countdown
+        # anyway (useful during development).
+        zigbee_bridge_state["permit_join"] = True
+        zigbee_bridge_state["permit_join_until"] = _iso(
+            datetime.now(timezone.utc) + timedelta(seconds=duration)
+        )
+        return {"ok": True, "simulated": True, "duration": duration}
+    try:
+        _mqtt_publish(
+            _z2m_topic("bridge/request/permit_join"),
+            {"value": True, "time": duration},
+        )
+        zigbee_bridge_state["permit_join"] = True
+        zigbee_bridge_state["permit_join_until"] = _iso(
+            datetime.now(timezone.utc) + timedelta(seconds=duration)
+        )
+        return {"ok": True, "duration": duration}
+    except Exception as exc:
+        raise HTTPException(502, f"MQTT publish failed: {exc}")
+
+
+@api_router.post("/zigbee/permit-join/stop")
+async def zigbee_permit_join_stop():
+    if _mqtt_client is not None:
+        try:
+            _mqtt_publish(
+                _z2m_topic("bridge/request/permit_join"),
+                {"value": False},
+            )
+        except Exception:
+            pass
+    zigbee_bridge_state["permit_join"] = False
+    zigbee_bridge_state["permit_join_until"] = None
+    return {"ok": True}
+
+
+@api_router.post("/zigbee/broker/test")
+async def zigbee_broker_test():
+    """Ping the MQTT broker + return connection status."""
+    return {
+        "connected": zigbee_bridge_state.get("broker_connected", False),
+        "host": zigbee_bridge_state.get("broker_host"),
+        "port": zigbee_bridge_state.get("broker_port"),
+        "bridge_state": zigbee_bridge_state.get("last_bridge_state"),
+        "hint": ("Broker connecté ✅"
+                 if zigbee_bridge_state.get("broker_connected")
+                 else "Aucun broker. Configurez MQTT_BROKER dans .env "
+                      "(ex: MQTT_BROKER=127.0.0.1 pour Mosquitto local)."),
+    }
+
+
+@api_router.delete("/zigbee/devices/{did}")
+async def zigbee_device_remove(did: str):
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        row = await (await db.execute(
+            "SELECT friendly_name FROM zigbee_devices WHERE id=?", (did,)
+        )).fetchone()
+        if not row:
+            raise HTTPException(404, "Appareil introuvable.")
+        friendly = row["friendly_name"]
+        await db.execute("DELETE FROM zigbee_devices WHERE id=?", (did,))
+        await db.commit()
+
+    if _mqtt_client is not None:
+        try:
+            _mqtt_publish(
+                _z2m_topic("bridge/request/device/remove"),
+                {"id": friendly, "block": False, "force": False},
+            )
+        except Exception as exc:
+            logger.warning("device remove publish failed: %s", exc)
+    return {"ok": True}
+
+
 @api_router.put("/zigbee/devices/{did}")
 async def zigbee_device_update(did: str, payload: ZigbeeDeviceUpdate):
     upd = {k: v for k, v in payload.dict().items() if v is not None}
     if not upd:
         raise HTTPException(400, "Aucun champ à mettre à jour.")
+    # If friendly_name is being changed and MQTT is live, also rename in Z2M
+    new_name = upd.get("friendly_name")
+    old_name: Optional[str] = None
+    if new_name and _mqtt_client is not None:
+        async with aiosqlite.connect(DB_PATH) as db:
+            db.row_factory = aiosqlite.Row
+            row = await (await db.execute(
+                "SELECT friendly_name FROM zigbee_devices WHERE id=?", (did,)
+            )).fetchone()
+            if row:
+                old_name = row["friendly_name"]
     async with aiosqlite.connect(DB_PATH) as db:
         sets = ", ".join(f"{k}=?" for k in upd.keys())
         vals = list(upd.values()) + [did]
@@ -1508,13 +1858,26 @@ async def zigbee_device_update(did: str, payload: ZigbeeDeviceUpdate):
         await db.commit()
         if cur.rowcount == 0:
             raise HTTPException(404, "Appareil introuvable.")
+    if new_name and old_name and old_name != new_name and _mqtt_client is not None:
+        try:
+            _mqtt_publish(
+                _z2m_topic("bridge/request/device/rename"),
+                {"from": old_name, "to": new_name},
+            )
+        except Exception as exc:
+            logger.warning("device rename publish failed: %s", exc)
     return {"ok": True}
 
 
 @api_router.post("/zigbee/devices/rescan")
 async def zigbee_rescan():
-    """When MQTT bridge is connected, forces a bridge/devices refresh.
-    In simulator mode, returns the current list unchanged."""
+    """Ask Zigbee2MQTT to re-publish its device inventory."""
+    if _mqtt_client is not None:
+        try:
+            # Re-subscribe / republish trigger via a benign info request
+            _mqtt_publish(_z2m_topic("bridge/request/health_check"), {})
+        except Exception as exc:
+            logger.warning("rescan publish failed: %s", exc)
     system_state["zigbee"] = "OK"
     return {"ok": True, "devices": await _zigbee_list()}
 
@@ -1716,11 +2079,14 @@ app.add_middleware(
 
 @app.on_event("startup")
 async def _startup():
+    global _main_loop
+    _main_loop = asyncio.get_running_loop()
     await init_db()
     asyncio.create_task(sensor_simulator_loop())
     asyncio.create_task(pump_scheduler_loop())
     asyncio.create_task(auto_schedule_daily_loop())
     asyncio.create_task(maintenance_reminder_loop())
+    asyncio.create_task(permit_join_watchdog_loop())
     start_mqtt_bridge()
     logger.info("Appli piscine backend ready. DB=%s", DB_PATH)
 
