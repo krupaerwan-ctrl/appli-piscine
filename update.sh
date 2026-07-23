@@ -73,8 +73,23 @@ cd "$HOME_DIR/backend"
 if [ ! -d ".venv" ]; then
     python3 -m venv .venv
 fi
-.venv/bin/pip install --quiet --upgrade \
-    fastapi 'uvicorn[standard]' aiosqlite pydantic python-dotenv paho-mqtt
+# Install the FULL requirements.txt (adds new libs like httpx, pymodbus, etc.)
+# Fall back to a minimal set if requirements.txt is missing for any reason.
+if [ -f "requirements.txt" ]; then
+    .venv/bin/pip install --quiet --upgrade -r requirements.txt || \
+        .venv/bin/pip install --quiet --upgrade \
+            fastapi 'uvicorn[standard]' aiosqlite pydantic python-dotenv paho-mqtt httpx
+else
+    .venv/bin/pip install --quiet --upgrade \
+        fastapi 'uvicorn[standard]' aiosqlite pydantic python-dotenv paho-mqtt httpx
+fi
+
+# Sanity check: verify the backend actually imports before we restart it.
+if ! .venv/bin/python -c "import server" 2>/tmp/poolkiosk_import_err.txt; then
+    echo "!! Le backend ne peut pas démarrer avec le nouveau code :"
+    cat /tmp/poolkiosk_import_err.txt
+    fail "Import backend échoué — dépendance manquante ou code cassé. Vérifiez ci-dessus."
+fi
 
 echo "-- Recompilation du frontend (2-5 min)..."
 cd "$HOME_DIR/frontend"

@@ -90,6 +90,7 @@ export default function Index() {
   const [history24, setHistory24] = useState<any[]>([]);
   const [toast, setToast] = useState<string | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [backendError, setBackendError] = useState<string | null>(null);
   const idleTimer = useRef<any>(null);
   const toastTimer = useRef<any>(null);
   const { width } = useWindowDimensions();
@@ -131,8 +132,10 @@ export default function Index() {
       const [d, a] = await Promise.all([api.summary(), api.alerts()]);
       setData(d);
       setAlerts(a.alerts || []);
-    } catch (e) {
+      setBackendError(null);
+    } catch (e: any) {
       console.log("reload err", e);
+      setBackendError(String(e?.message || e || "Erreur inconnue").slice(0, 200));
     }
   }, []);
 
@@ -176,8 +179,40 @@ export default function Index() {
   const renderContent = () => {
     if (!data) {
       return (
-        <View style={{ flex: 1, alignItems: "center", justifyContent: "center" }}>
-          <Text style={{ color: COLORS.textMuted }}>Connexion MQTT…</Text>
+        <View style={{ flex: 1, alignItems: "center", justifyContent: "center", padding: SPACING.xl }}>
+          {backendError ? (
+            <>
+              <Ionicons name="alert-circle" size={48} color={COLORS.error} />
+              <Text style={{ color: COLORS.text, fontSize: FS.lg, fontWeight: "600", marginTop: SPACING.md }}>
+                Backend injoignable
+              </Text>
+              <Text style={{ color: COLORS.textMuted, fontSize: FS.sm, marginTop: SPACING.sm, textAlign: "center", maxWidth: 500 }}>
+                Le service backend ne répond pas. Sur le Raspberry Pi, ouvrez un terminal SSH et exécutez :{"\n"}
+                <Text style={{ fontFamily: Platform.OS === "web" ? "monospace" : undefined, color: COLORS.text }}>
+                  sudo systemctl restart poolkiosk-backend
+                </Text>
+              </Text>
+              <Text style={{ color: COLORS.textMuted, fontSize: FS.sm, marginTop: SPACING.sm, opacity: 0.7 }}>
+                Erreur : {backendError}
+              </Text>
+              <Pressable
+                onPress={reload}
+                style={{
+                  marginTop: SPACING.lg,
+                  paddingHorizontal: SPACING.lg, paddingVertical: SPACING.md,
+                  backgroundColor: COLORS.brand, borderRadius: 12,
+                }}
+                testID="retry-backend"
+              >
+                <Text style={{ color: "#fff", fontWeight: "700" }}>Réessayer</Text>
+              </Pressable>
+            </>
+          ) : (
+            <>
+              <Ionicons name="sync" size={36} color={COLORS.textMuted} />
+              <Text style={{ color: COLORS.textMuted, marginTop: SPACING.md }}>Chargement des données…</Text>
+            </>
+          )}
         </View>
       );
     }
