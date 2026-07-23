@@ -277,13 +277,13 @@ export const ZigbeeScreen: React.FC = () => {
 
       {/* Big pairing button / countdown */}
       <View style={s.pairingCard}>
-        <View style={{ flex: 1 }}>
+        <View style={{ flex: 1, minWidth: 200 }}>
           <Text style={s.pairingTitle}>
             {isPairing ? "🔍 Recherche en cours…" : "Ajouter une nouvelle sonde"}
           </Text>
           <Text style={s.pairingHint}>
             {isPairing
-              ? `Mettez votre sonde/relais en mode appairage. Ils apparaîtront ci-dessous automatiquement.`
+              ? "Mettez votre sonde/relais en mode appairage. Ils apparaîtront ci-dessous automatiquement."
               : "Ouvrez la fenêtre de pairing 60s puis mettez votre appareil en mode découverte."}
           </Text>
         </View>
@@ -347,8 +347,8 @@ const s = StyleSheet.create({
   pairingCard: {
     backgroundColor: COLORS.surfaceSecondary, borderRadius: RADIUS.lg,
     padding: SPACING.lg, borderWidth: 1, borderColor: COLORS.brand,
-    marginTop: SPACING.lg, flexDirection: "row", gap: SPACING.md, alignItems: "center",
-    flexWrap: "wrap",
+    marginTop: SPACING.lg, gap: SPACING.md,
+    flexDirection: "row", alignItems: "center", flexWrap: "wrap",
   },
   pairingTitle: { color: COLORS.text, fontSize: FS.lg, fontWeight: "700" },
   pairingHint: { color: COLORS.textMuted, fontSize: FS.sm, marginTop: 4 },
