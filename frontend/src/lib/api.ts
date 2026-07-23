@@ -51,6 +51,7 @@ export const api = {
     req(`/maintenance/${id}`, { method: "DELETE" }),
   markMaintenanceDone: (id: string) =>
     req(`/maintenance/${id}/done`, { method: "POST" }),
+  testPush: () => req("/push/test", { method: "POST" }),
 };
 
 export type Sensor = { metric: string; value: number; unit: string };

@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "852758652466",
+    "project_id": "gestion-piscine-cf34a",
+    "storage_bucket": "gestion-piscine-cf34a.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:852758652466:android:cfa749a10561245e70be2b",
+        "android_client_info": {
+          "package_name": "com.poolkiosk.app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyD4i_4r8IeJMrq4IOtcrYF0DnHMK1sA64Y"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

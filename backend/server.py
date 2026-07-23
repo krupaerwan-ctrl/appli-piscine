@@ -6,6 +6,7 @@ from fastapi import FastAPI, APIRouter, HTTPException
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 import aiosqlite
+import httpx
 import os
 import asyncio
 import json
@@ -32,6 +33,73 @@ api_router = APIRouter(prefix="/api")
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger("pool")
+
+# ==============================================================
+# EMERGENT PUSH NOTIFICATIONS (SuprSend relay)
+# ==============================================================
+PUSH_BASE_URL = "https://integrations.emergentagent.com"
+PUSH_KEY = os.environ.get("EMERGENT_PUSH_KEY", "placeholder")
+_push_client = httpx.AsyncClient(
+    base_url=PUSH_BASE_URL,
+    headers={"X-Push-Key": PUSH_KEY},
+    timeout=10.0,
+)
+
+
+async def _list_push_subscribers() -> List[str]:
+    """Return all enrolled device user_ids (one per phone that registered)."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        rows = await (await db.execute(
+            "SELECT DISTINCT user_id FROM push_subscribers"
+        )).fetchall()
+        return [r["user_id"] for r in rows]
+
+
+async def send_push(
+    data: Dict[str, Any],
+    recipients: Optional[List[str]] = None,
+    idempotency_key: Optional[str] = None,
+) -> None:
+    """Send a push notification to all subscribed devices (or a subset).
+    Non-blocking on failure — the caller's flow must never be interrupted."""
+    try:
+        if recipients is None:
+            recipients = await _list_push_subscribers()
+        if not recipients:
+            return
+        if "title" not in data or "message" not in data:
+            raise ValueError("push data must include title and message")
+        # SuprSend limits to 100 recipients per call — chunk if needed
+        for i in range(0, len(recipients), 100):
+            chunk = recipients[i : i + 100]
+            payload: Dict[str, Any] = {"recipients": chunk, "data": data}
+            if idempotency_key:
+                payload["$idempotency_key"] = f"{idempotency_key}-{i}"
+            resp = await _push_client.post("/api/v1/push/trigger", json=payload)
+            if resp.status_code == 401:
+                logger.warning("EMERGENT_PUSH_KEY missing/invalid — skipping push")
+                return
+            if resp.status_code >= 400:
+                logger.warning(
+                    "Push relay returned %s: %s",
+                    resp.status_code, resp.text[:200],
+                )
+                return
+        logger.info("Push sent: %s → %d recipient(s)", data.get("title"), len(recipients))
+    except Exception as exc:
+        # Never bubble — push must be fire-and-forget
+        logger.warning("Push notification failed (non-blocking): %s", exc)
+
+
+def push_bg(data: Dict[str, Any], idempotency_key: Optional[str] = None):
+    """Fire-and-forget push. Safe to call from any coroutine."""
+    try:
+        asyncio.create_task(send_push(data, idempotency_key=idempotency_key))
+    except RuntimeError:
+        # No running loop (rare) — swallow silently
+        pass
+
 
 # ==============================================================
 # DEFAULTS
@@ -214,7 +282,15 @@ async def init_db():
         CREATE TABLE IF NOT EXISTS maintenance_tasks (
             id TEXT PRIMARY KEY, name TEXT NOT NULL, icon TEXT NOT NULL,
             interval_days INTEGER NOT NULL DEFAULT 30,
-            last_done_at TEXT, enabled INTEGER NOT NULL DEFAULT 1
+            last_done_at TEXT, enabled INTEGER NOT NULL DEFAULT 1,
+            notified_at TEXT
+        );
+
+        CREATE TABLE IF NOT EXISTS push_subscribers (
+            user_id TEXT PRIMARY KEY,
+            platform TEXT NOT NULL,
+            device_token TEXT NOT NULL,
+            registered_at TEXT NOT NULL
         );
         """)
         await db.commit()
@@ -228,6 +304,16 @@ async def init_db():
                 await db.commit()
             except Exception as e:
                 logger.warning("add water_temp column failed: %s", e)
+
+        # Column migration: add notified_at to maintenance_tasks on existing DBs
+        cur = await db.execute("PRAGMA table_info(maintenance_tasks)")
+        cols_m = {row[1] async for row in cur}
+        if "notified_at" not in cols_m:
+            try:
+                await db.execute("ALTER TABLE maintenance_tasks ADD COLUMN notified_at TEXT")
+                await db.commit()
+            except Exception as e:
+                logger.warning("add notified_at column failed: %s", e)
 
         # Seed defaults if empty
         cur = await db.execute("SELECT COUNT(*) FROM settings")
@@ -334,6 +420,13 @@ async def create_alert(level: str, title: str, message: str):
         )
         await db.commit()
     logger.warning("ALERT [%s] %s - %s", level, title, message)
+    # Push every new alert (level = "error" or "warning") to registered phones
+    icon = "🚨" if level == "error" else "⚠️"
+    push_bg({
+        "title": f"{icon} {title}",
+        "message": message,
+        "action_url": "/",
+    })
 
 
 async def log_equipment_event(equipment_id: str, action: str, source: str, reason: Optional[str] = None):
@@ -351,6 +444,26 @@ async def log_equipment_event(equipment_id: str, action: str, source: str, reaso
              _iso(datetime.now(timezone.utc)), water_temp),
         )
         await db.commit()
+
+    # ---- Push notification: pump start/stop ----
+    if equipment_id == "filtration" and action in ("on", "off"):
+        icon = "▶️" if action == "on" else "⏹️"
+        title = f"{icon} Pompe {'démarrée' if action == 'on' else 'arrêtée'}"
+        source_label = {
+            "user": "Commande manuelle",
+            "scheduler": "Planning automatique",
+            "safety": "Sécurité",
+            "coupling": "Couplage automatique",
+        }.get(source, source)
+        body = f"{source_label}"
+        if water_temp:
+            body += f"  ·  Eau {water_temp:.1f}°C"
+        push_bg({
+            "title": title,
+            "message": body,
+            "subtext": reason or "",
+            "action_url": "/",
+        })
 
 
 async def _set_setting(key: str, value: Any):
@@ -568,6 +681,17 @@ async def evaluate_metric_alerts():
                 f"Pression trop basse ({p:.2f} bar). Coupure automatique imminente.",
                 f"Pression trop haute ({p:.2f} bar). Filtre bouché — coupure imminente.")
 
+    temp_val = sensor_state["temp"]["value"]
+    target = float(settings.get("temp_target", 28.0))
+    # Warn if temperature drifts more than 4°C from target (soft) or 6°C (hard)
+    t_min = target - 6.0
+    t_max = target + 6.0
+    await check("TEMP", temp_val, t_min, t_max, "°C",
+                f"Eau à {temp_val:.1f}°C — commence à baisser sous la cible ({target:.0f}°C).",
+                f"Eau à {temp_val:.1f}°C — commence à dépasser la cible ({target:.0f}°C).",
+                f"Eau trop froide ({temp_val:.1f}°C < {t_min:.0f}°C). Vérifier la PAC.",
+                f"Eau trop chaude ({temp_val:.1f}°C > {t_max:.0f}°C). Réduire le chauffage.")
+
 
 async def _stop_electrolyseur_and_pump(reason_pump: str):
     """Stop electrolyseur FIRST, then pump. Used by safety cut-offs."""
@@ -711,6 +835,35 @@ async def auto_schedule_daily_loop():
         except Exception as exc:
             logger.exception("auto schedule loop error: %s", exc)
         await asyncio.sleep(1800)  # check every 30 min
+
+
+async def maintenance_reminder_loop():
+    """Every 30 min, push a notification once per task the first time it becomes overdue."""
+    await asyncio.sleep(60)
+    while True:
+        try:
+            tasks = await _list_maintenance()
+            async with aiosqlite.connect(DB_PATH) as db:
+                for t in tasks:
+                    if not t.get("enabled") or not t.get("is_overdue"):
+                        continue
+                    # Only push if we haven't notified yet for this due cycle.
+                    # Reset happens via mark_maintenance_done (clears notified_at).
+                    if t.get("notified_at"):
+                        continue
+                    push_bg({
+                        "title": "🛠️ Rappel maintenance",
+                        "message": f"{t['name']} : à faire dès maintenant.",
+                        "action_url": "/",
+                    }, idempotency_key=f"maint-{t['id']}-{t.get('next_due_at','')}")
+                    await db.execute(
+                        "UPDATE maintenance_tasks SET notified_at=? WHERE id=?",
+                        (_iso(datetime.now(timezone.utc)), t["id"]),
+                    )
+                await db.commit()
+        except Exception as exc:
+            logger.exception("maintenance reminder loop error: %s", exc)
+        await asyncio.sleep(1800)
 
 
 # ==============================================================
@@ -916,7 +1069,7 @@ async def _list_maintenance() -> List[Dict[str, Any]]:
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
         async for row in await db.execute(
-            "SELECT id, name, icon, interval_days, last_done_at, enabled "
+            "SELECT id, name, icon, interval_days, last_done_at, enabled, notified_at "
             "FROM maintenance_tasks ORDER BY name ASC"
         ):
             d = dict(row)
@@ -998,16 +1151,74 @@ async def delete_maintenance(tid: str):
 
 @api_router.post("/maintenance/{tid}/done")
 async def mark_maintenance_done(tid: str):
-    """Reset the timer of a task: sets last_done_at = now."""
+    """Reset the timer of a task: sets last_done_at = now, clears notified_at."""
     now_iso = _iso(datetime.now(timezone.utc))
     async with aiosqlite.connect(DB_PATH) as db:
         cur = await db.execute(
-            "UPDATE maintenance_tasks SET last_done_at=? WHERE id=?", (now_iso, tid)
+            "UPDATE maintenance_tasks SET last_done_at=?, notified_at=NULL WHERE id=?",
+            (now_iso, tid),
         )
         await db.commit()
         if cur.rowcount == 0:
             raise HTTPException(404, "Tâche introuvable.")
     return {"ok": True, "last_done_at": now_iso}
+
+
+# ==============================================================
+# PUSH NOTIFICATIONS — device registration
+# ==============================================================
+class RegisterPushBody(BaseModel):
+    user_id: str
+    platform: str  # "android" | "ios"
+    device_token: str
+
+
+@api_router.post("/register-push", status_code=201)
+async def register_push(body: RegisterPushBody):
+    """Register a mobile device token with the Emergent push relay AND
+    persist it locally so we know who to notify on events."""
+    # 1) Save locally (idempotent upsert)
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            "INSERT INTO push_subscribers(user_id, platform, device_token, registered_at) "
+            "VALUES(?,?,?,?) "
+            "ON CONFLICT(user_id) DO UPDATE SET "
+            "platform=excluded.platform, device_token=excluded.device_token, "
+            "registered_at=excluded.registered_at",
+            (body.user_id, body.platform, body.device_token,
+             _iso(datetime.now(timezone.utc))),
+        )
+        await db.commit()
+
+    # 2) Relay upstream to Emergent push provider
+    relay_ok = False
+    try:
+        resp = await _push_client.post(
+            "/api/v1/push/users/register", json=body.model_dump()
+        )
+        if resp.status_code == 401:
+            # Key is placeholder in dev — device is still saved locally,
+            # deployer will replace the key on Publish → real relay works.
+            logger.info("Relay skipped (dev mode) — device %s saved locally", body.user_id[:8])
+        elif resp.status_code >= 500:
+            logger.warning("Push relay 5xx: %s", resp.text[:200])
+        else:
+            resp.raise_for_status()
+            relay_ok = True
+    except Exception as exc:
+        logger.warning("Push relay error (kept locally): %s", exc)
+    return {"status": "registered", "relay_ok": relay_ok}
+
+
+@api_router.post("/push/test")
+async def push_test():
+    """Manually trigger a test push to all registered devices."""
+    await send_push({
+        "title": "PoolKiosk – test",
+        "message": "Si vous voyez cette notification, votre téléphone est bien connecté 🎉",
+        "action_url": "/",
+    }, idempotency_key=f"test-{uuid.uuid4()}")
+    return {"ok": True, "recipients": len(await _list_push_subscribers())}
 
 
 async def _pump_runtime_payload() -> Dict[str, Any]:
@@ -1509,6 +1720,7 @@ async def _startup():
     asyncio.create_task(sensor_simulator_loop())
     asyncio.create_task(pump_scheduler_loop())
     asyncio.create_task(auto_schedule_daily_loop())
+    asyncio.create_task(maintenance_reminder_loop())
     start_mqtt_bridge()
     logger.info("Appli piscine backend ready. DB=%s", DB_PATH)
 

@@ -1,8 +1,9 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
-import { View, StyleSheet, Pressable, Text, ScrollView, Platform } from "react-native";
+import { View, StyleSheet, Pressable, Text, ScrollView, Platform, useWindowDimensions, Modal } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { StatusBar } from "expo-status-bar";
+import { Ionicons } from "@expo/vector-icons";
 import { COLORS, SPACING, FS } from "../src/lib/theme";
 import { Sidebar } from "../src/components/Sidebar";
 import { TopHeader } from "../src/components/TopHeader";
@@ -22,6 +23,7 @@ import {
   TempWaveCard, MetricCard, HistoryChartCard, EquipmentCard, PressureCard,
 } from "../src/components/Widgets";
 import { api } from "../src/lib/api";
+import { usePushRegistration } from "../src/lib/push";
 
 // --- Kiosk touch/no-cursor styles (web build on Raspberry Pi) ---
 if (Platform.OS === "web" && typeof document !== "undefined") {
@@ -87,8 +89,14 @@ export default function Index() {
   const [alerts, setAlerts] = useState<any[]>([]);
   const [history24, setHistory24] = useState<any[]>([]);
   const [toast, setToast] = useState<string | null>(null);
+  const [drawerOpen, setDrawerOpen] = useState(false);
   const idleTimer = useRef<any>(null);
   const toastTimer = useRef<any>(null);
+  const { width } = useWindowDimensions();
+  const isMobile = width < 720;
+
+  // Register this phone with the push relay (no-op on web / no-op on Pi kiosk)
+  usePushRegistration(process.env.EXPO_PUBLIC_BACKEND_URL || "");
 
   // Central equipment toggle with OPTIMISTIC UI + coupling mirrored client-side
   const handleToggleEquipment = useCallback(async (id: string, next: boolean) => {
@@ -216,19 +224,57 @@ export default function Index() {
     <GestureHandlerRootView style={{ flex: 1 }}>
       <SafeAreaView style={styles.root} onTouchStart={resetIdle}>
       <StatusBar style="light" />
-      <View style={styles.shell}>
-        <Sidebar
-          active={active}
-          onSelect={(k) => { setActive(k); resetIdle(); }}
-          mqttOk={data?.system?.mqtt === "OK"}
-          systemOk={data?.system?.sensors === "OK"}
-        />
+      <View style={[styles.shell, isMobile && { flexDirection: "column" }]}>
+        {/* Desktop / kiosque : sidebar fixe */}
+        {!isMobile && (
+          <Sidebar
+            active={active}
+            onSelect={(k) => { setActive(k); resetIdle(); }}
+            mqttOk={data?.system?.mqtt === "OK"}
+            systemOk={data?.system?.sensors === "OK"}
+          />
+        )}
+        {/* Mobile : drawer coulissant (via Modal) */}
+        {isMobile && (
+          <Modal
+            visible={drawerOpen}
+            transparent
+            animationType="slide"
+            onRequestClose={() => setDrawerOpen(false)}
+          >
+            <Pressable style={styles.drawerBackdrop} onPress={() => setDrawerOpen(false)}>
+              <Pressable style={styles.drawerPanel} onPress={() => {}}>
+                <Sidebar
+                  active={active}
+                  onSelect={(k) => { setActive(k); resetIdle(); setDrawerOpen(false); }}
+                  mqttOk={data?.system?.mqtt === "OK"}
+                  systemOk={data?.system?.sensors === "OK"}
+                />
+              </Pressable>
+            </Pressable>
+          </Modal>
+        )}
+
         <View style={{ flex: 1 }}>
-          <TopHeader outdoorTemp={sensors.outdoor_temp?.value ?? 28} title={headerTitle(active)} />
-          <View style={{ flex: 1, paddingRight: Platform.OS === "web" ? 56 : 0 }}>{renderContent()}</View>
-          <TouchScrollbar />
+          <TopHeader
+            outdoorTemp={sensors.outdoor_temp?.value ?? 28}
+            title={headerTitle(active)}
+            compact={isMobile}
+            leftAdornment={isMobile ? (
+              <Pressable
+                onPress={() => setDrawerOpen(true)}
+                style={styles.hamburger}
+                hitSlop={10}
+                testID="mobile-menu"
+              >
+                <Ionicons name="menu" size={26} color={COLORS.text} />
+              </Pressable>
+            ) : null}
+          />
+          <View style={{ flex: 1, paddingRight: (!isMobile && Platform.OS === "web") ? 56 : 0 }}>{renderContent()}</View>
+          {!isMobile && <TouchScrollbar />}
           {toast && (
-            <View style={styles.toast} testID="global-toast">
+            <View style={[styles.toast, isMobile && styles.toastMobile]} testID="global-toast">
               <Text style={styles.toastText}>{toast}</Text>
             </View>
           )}
@@ -239,7 +285,7 @@ export default function Index() {
           </View>
         </View>
       </View>
-      {idle && (
+      {idle && !isMobile && (
         <View style={StyleSheet.absoluteFill}>
           <Screensaver
             waterTemp={sensors.temp?.value ?? 0}
@@ -255,6 +301,17 @@ export default function Index() {
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: COLORS.surface },
   shell: { flex: 1, flexDirection: "row" },
+  hamburger: {
+    width: 44, height: 44, alignItems: "center", justifyContent: "center",
+    borderRadius: 22, marginLeft: -6,
+  },
+  drawerBackdrop: {
+    flex: 1, backgroundColor: "rgba(0,0,0,0.5)",
+  },
+  drawerPanel: {
+    width: 260, height: "100%", backgroundColor: COLORS.surface,
+    borderRightWidth: 1, borderRightColor: COLORS.border,
+  },
   pageTitle: { color: COLORS.text, fontSize: FS.xxl, fontWeight: "700", marginBottom: SPACING.md },
   footer: {
     height: 32, backgroundColor: COLORS.surface, borderTopWidth: 1, borderTopColor: COLORS.border,
@@ -266,6 +323,9 @@ const styles = StyleSheet.create({
     width: 440, backgroundColor: COLORS.error, paddingHorizontal: SPACING.lg,
     paddingVertical: SPACING.md, borderRadius: 12, zIndex: 200,
     shadowColor: "#000", shadowOpacity: 0.4, shadowRadius: 10, shadowOffset: { width: 0, height: 4 },
+  },
+  toastMobile: {
+    width: "90%", left: "5%", transform: [{ translateX: 0 }], bottom: 100,
   },
   toastText: { color: "#fff", fontSize: FS.base, textAlign: "center", fontWeight: "600" },
 });

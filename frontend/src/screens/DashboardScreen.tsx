@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { View, StyleSheet, ScrollView } from "react-native";
+import { View, StyleSheet, ScrollView, useWindowDimensions } from "react-native";
 import { COLORS, SPACING } from "../lib/theme";
 import {
   TempWaveCard, MetricCard, HistoryChartCard, PressureCard,
@@ -22,6 +22,8 @@ const W: Record<string, number> = {
 export const DashboardScreen: React.FC<Props> = ({ data, reload, onToggleEquipment, onNavigate }) => {
   const [history, setHistory] = useState<any[]>([]);
   const [histRange, setHistRange] = useState<"24h" | "7j">("24h");
+  const { width } = useWindowDimensions();
+  const isMobile = width < 720;
   useEffect(() => {
     const hours = histRange === "7j" ? 168 : 24;
     api.history("temp", hours).then((r) => {
@@ -155,7 +157,9 @@ export const DashboardScreen: React.FC<Props> = ({ data, reload, onToggleEquipme
         {orderedWidgets.map((w: any) => (
           <View
             key={w.id}
-            style={{ minWidth: W[w.id] || 240, flexGrow: 1, flexBasis: W[w.id] || 240 }}
+            style={isMobile
+              ? { width: "100%" }
+              : { minWidth: W[w.id] || 240, flexGrow: 1, flexBasis: W[w.id] || 240 }}
           >
             {renderWidget(w.id)}
           </View>

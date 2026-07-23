@@ -4,7 +4,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { COLORS, SPACING, FS } from "../lib/theme";
 import { api } from "../lib/api";
 
-type Props = { outdoorTemp?: number; title?: string };
+type Props = { outdoorTemp?: number; title?: string; compact?: boolean; leftAdornment?: React.ReactNode };
 
 type WifiStatus = {
   available: boolean;
@@ -51,7 +51,7 @@ function wifiLabel(w: WifiStatus): string {
   return `${w.signal_percent}%`;
 }
 
-export const TopHeader: React.FC<Props> = ({ outdoorTemp = 28, title = "Tableau de bord" }) => {
+export const TopHeader: React.FC<Props> = ({ outdoorTemp = 28, title = "Tableau de bord", compact = false, leftAdornment = null }) => {
   const [now, setNow] = useState(new Date());
   const [wifi, setWifi] = useState<WifiStatus>(DEFAULT_WIFI);
   const [detailsOpen, setDetailsOpen] = useState(false);
@@ -80,9 +80,15 @@ export const TopHeader: React.FC<Props> = ({ outdoorTemp = 28, title = "Tableau 
   const date = now.toLocaleDateString("fr-FR", { day: "numeric", month: "long", year: "numeric" });
 
   return (
-    <View style={styles.wrap} testID="top-header">
-      <Text style={styles.title}>{title}</Text>
-      <View style={styles.right}>
+    <View style={[styles.wrap, compact && styles.wrapCompact]} testID="top-header">
+      {leftAdornment}
+      <Text
+        style={[styles.title, compact && styles.titleCompact]}
+        numberOfLines={1}
+      >
+        {title}
+      </Text>
+      <View style={[styles.right, compact && styles.rightCompact]}>
         <Pressable
           onPress={() => {
             refreshWifi();
@@ -179,8 +185,13 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     backgroundColor: COLORS.surface,
   },
-  title: { color: COLORS.text, fontSize: FS.xxl, fontWeight: "600" },
+  wrapCompact: {
+    height: 56, paddingHorizontal: SPACING.md, gap: SPACING.sm,
+  },
+  title: { color: COLORS.text, fontSize: FS.xxl, fontWeight: "600", flexShrink: 1 },
+  titleCompact: { fontSize: FS.lg, flex: 1 },
   right: { flexDirection: "row", alignItems: "center", gap: SPACING.lg },
+  rightCompact: { gap: SPACING.sm },
   wifi: {
     flexDirection: "row",
     alignItems: "center",

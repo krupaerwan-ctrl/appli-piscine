@@ -76,7 +76,7 @@ export const PumpControlCard: React.FC<PumpProps> = ({
 }) => {
   const showOverrideBadge = manualOverride && autoFiltration;
   return (
-    <Card testID="widget-pump" style={{ flex: 2, minWidth: 380 }}>
+    <Card testID="widget-pump" style={{ flex: 2, minWidth: 280 }}>
       <View style={styles.metricHead}>
         <Ionicons name="power" size={18} color={COLORS.brand} />
         <Text style={styles.metricLabel}>Contrôle pompe</Text>
@@ -159,9 +159,10 @@ const pumpS = StyleSheet.create({
   badgeText: { color: COLORS.warning, fontSize: FS.sm, fontWeight: "600" },
   mainRow: {
     flexDirection: "row", gap: SPACING.md, marginTop: SPACING.sm, alignItems: "stretch",
+    flexWrap: "wrap",
   },
   mainBtn: {
-    flex: 1, minWidth: 160, minHeight: 150, borderRadius: 16, borderWidth: 2,
+    flex: 1, minWidth: 140, minHeight: 130, borderRadius: 16, borderWidth: 2,
     alignItems: "center", justifyContent: "center", padding: SPACING.md, gap: 4,
   },
   mainBtnText: { fontSize: FS.xl, fontWeight: "700" },
@@ -218,7 +219,7 @@ export const HistoryChartCard: React.FC<HistProps> = ({ points, range = "24h", o
     dataPointRadius: 0,
   }));
   return (
-    <Card testID="widget-history" style={{ flex: 2, minWidth: 380 }}>
+    <Card testID="widget-history" style={{ flex: 2, minWidth: 280 }}>
       <View style={styles.metricHead}>
         <Ionicons name="trending-up" size={18} color={COLORS.metricTemp} />
         <Text style={styles.metricLabel}>

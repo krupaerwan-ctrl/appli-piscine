@@ -1,0 +1,35 @@
+{
+  "summary": "PoolKiosk push-notifications + responsive UI test — 9/9 backend tests PASS and mobile+desktop UI flows verified. /api/register-push returns 201 with status='registered', relay_ok=false (upstream 401 as expected with placeholder key); subscriber persisted in push_subscribers table; upsert on user_id works. /api/push/test returns {ok:true, recipients:N} without crashing when upstream 401s. push_bg confirmed firing for filtration on/off (backend log: HTTP POST /api/v1/push/trigger + 'EMERGENT_PUSH_KEY missing/invalid' warning) and for every create_alert (warning + error levels). GET /api/maintenance returns notified_at field on every task; mark_maintenance_done clears notified_at. GET /api/dashboard/summary regression OK — 12 widgets, pump dict complete, maintenance list present. Frontend at 390x844: hamburger testID='mobile-menu' visible, drawer opens with all 10 nav items, tapping nav closes drawer + switches screen, no horizontal scroll (scrollWidth==clientWidth==390), PumpControlCard fully visible. At 1280x720: sidebar remains visible, NO hamburger rendered, layout unchanged. TopHeader compact=true: title numberOfLines=1, WiFi indicator + time preserved.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Global (React Native Web console)", "issues": ["Deprecation warnings: 'shadow*' style props → migrate to 'boxShadow'", "props.pointerEvents is deprecated → move to style.pointerEvents"]}
+    ],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_push_notifications.py",
+    "/app/test_reports/pytest/iteration_11.xml"
+  ],
+  "action_items": [
+    "Optional cleanup: replace deprecated 'shadow*' StyleSheet props with 'boxShadow' and move 'pointerEvents' prop into style to silence RNW console warnings (non-blocking).",
+    "Reminder for deploy: replace EMERGENT_PUSH_KEY=placeholder in backend/.env at Publish time so upstream stops returning 401 and real devices get pushes."
+  ],
+  "critical_code_review_comments": [
+    "server.py is 1600+ lines — consider splitting push/, maintenance/, equipment/ routers into modules for maintainability (not blocking).",
+    "_push_client is created at module import — good; timeouts=10s prevents hang. push_bg uses asyncio.create_task (fire-and-forget) — verified non-blocking.",
+    "usePushRegistration correctly no-ops on web (Platform.OS === 'web') so kiosk web build doesn't attempt native token retrieval."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100%", "frontend": "100%"},
+  "seed_data_creation": "TEST_pushuser_* subscribers inserted via register-push; auto-cleaned in session-scope pytest teardown.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Push relay 401 is EXPECTED in dev (EMERGENT_PUSH_KEY=placeholder). Verify by grep of /var/log/supervisor/backend.err.log for 'EMERGENT_PUSH_KEY missing/invalid — skipping push' after any equipment toggle or alert. Local push_subscribers table lives in /app/backend/poolkiosk.db (SQLite). Frontend push registration is a no-op on web — full path only testable on native iOS/Android build.",
+  "rca_of_issue": ""
+}
