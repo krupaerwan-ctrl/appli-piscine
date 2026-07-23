@@ -7,9 +7,43 @@ set -e
 MODE="$1"
 STATE_FILE=/tmp/poolkiosk_update_state.txt
 LOG_FILE=/tmp/poolkiosk_update.log
-HOME_DIR="${POOLKIOSK_HOME:-/home/pi/poolkiosk}"
+
+# --- Auto-detect the app home directory ---
+# 1) $POOLKIOSK_HOME env var (set by backend when invoking us).
+# 2) Directory containing THIS script (works whether the folder is called
+#    'poolkiosk', 'appli-piscine', or anything else).
+# 3) Falls back to /home/pi/poolkiosk for backward compat.
+if [ -n "$POOLKIOSK_HOME" ]; then
+    HOME_DIR="$POOLKIOSK_HOME"
+else
+    SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &>/dev/null && pwd)"
+    if [ -d "$SCRIPT_DIR/backend" ] && [ -d "$SCRIPT_DIR/frontend" ]; then
+        HOME_DIR="$SCRIPT_DIR"
+    else
+        HOME_DIR="/home/pi/poolkiosk"
+    fi
+fi
+
+# --- Auto-detect the systemd service names ---
+# Users may have named services 'poolkiosk-*', 'appli-piscine-*', or something
+# else. We look for any unit that matches known patterns.
+find_service() {
+    local pat="$1"
+    for svc in $(systemctl list-unit-files --type=service --no-legend 2>/dev/null | awk '{print $1}'); do
+        if echo "$svc" | grep -qiE "$pat"; then
+            echo "$svc"
+            return 0
+        fi
+    done
+    return 1
+}
+BACKEND_SVC="$(find_service '(poolkiosk|appli-piscine|pool-kiosk).*back' || true)"
+FRONTEND_SVC="$(find_service '(poolkiosk|appli-piscine|pool-kiosk).*front' || true)"
 
 echo "=== $(date) : starting update ($MODE) ==="
+echo "-- Home dir      : $HOME_DIR"
+echo "-- Backend svc   : ${BACKEND_SVC:-<non détecté>}"
+echo "-- Frontend svc  : ${FRONTEND_SVC:-<non détecté>}"
 
 fail() {
     echo "!! $1"
@@ -105,10 +139,14 @@ fi
 npx expo export -p web
 
 echo "-- Redémarrage du frontend..."
-if sudo -n /bin/systemctl restart poolkiosk-frontend 2>/dev/null; then
-    echo "Frontend redémarré."
+if [ -n "$FRONTEND_SVC" ]; then
+    if sudo -n /bin/systemctl restart "$FRONTEND_SVC" 2>/dev/null; then
+        echo "Frontend ($FRONTEND_SVC) redémarré."
+    else
+        echo "!! sudo systemctl restart $FRONTEND_SVC a échoué. Vérifiez la config sudoers."
+    fi
 else
-    echo "!! sudo systemctl restart poolkiosk-frontend a échoué. Vérifiez la config sudoers."
+    echo "-- Aucun service frontend systemd détecté (pas grave si Chromium relit dist/ directement)."
 fi
 
 echo "success" > "$STATE_FILE"
@@ -116,7 +154,11 @@ echo "=== $(date) : mise à jour terminée avec succès ==="
 echo "-- Redémarrage du backend dans 3s (cette fenêtre va se figer)..."
 
 # Restart backend last, from a background subshell so this script can finish.
-# Requires: pi ALL=(ALL) NOPASSWD: /bin/systemctl restart poolkiosk-backend
-(sleep 3 && sudo -n /bin/systemctl restart poolkiosk-backend) &
-disown
+# Sudoers example: erwan ALL=(ALL) NOPASSWD: /bin/systemctl restart appli-piscine-backend
+if [ -n "$BACKEND_SVC" ]; then
+    (sleep 3 && sudo -n /bin/systemctl restart "$BACKEND_SVC") &
+    disown
+else
+    echo "-- Aucun service backend systemd détecté. Redémarrez-le manuellement."
+fi
 exit 0
